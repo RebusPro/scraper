@@ -115,12 +115,3 @@ graph TD
 2. Implement Puppeteer for JavaScript-heavy sites
 3. Create flexible extraction patterns that work across different HTML structures
 4. Add delays between requests and limit concurrent scraping
-
-## 7. Timeline Estimate
-
-- **Phase 1**: 1-2 days
-- **Phase 2**: 3-4 days
-- **Phase 3**: 1-2 days
-- **Phase 4**: 1-2 days
-
-Total estimated development time: 6-10 days
