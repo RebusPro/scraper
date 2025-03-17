@@ -1,5 +1,5 @@
 /**
- * Utilities for exporting scraped data to different formats
+ * Utilities for exporting scraped data to different formats ...
  */
 import ExcelJS from "exceljs";
 import { stringify } from "csv-stringify/sync";
