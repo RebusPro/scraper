@@ -5,6 +5,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
 import { extractEmails, processContactData } from "./emailExtractor";
+import { extractDataFromJson } from "./jsonExtractor";
 import { ScrapedContact, ScrapingOptions, ScrapingResult } from "./types";
 
 export class WebScraper {
@@ -14,6 +15,10 @@ export class WebScraper {
     timeout: 30000, // 30 seconds
     useHeadless: true,
     includePhoneNumbers: true,
+    formInteraction: {
+      enabled: false,
+      waitTime: 2000, // Default wait time after form submission
+    },
   };
 
   constructor(private options: ScrapingOptions = {}) {
@@ -240,8 +245,69 @@ export class WebScraper {
         // TypeScript doesn't recognize ignoreHTTPSErrors in this version
       });
 
-      // Open new page
+      // Open new page with DevTools opened (helps with capturing network requests)
       const page = await browser.newPage();
+
+      // Explicitly create CDP session to monitor network
+      const client = await page.target().createCDPSession();
+
+      // Enable network monitoring
+      await client.send("Network.enable");
+
+      // Store captured network data
+      interface ApiResponse {
+        url: string;
+        content: string;
+        contentType: string;
+      }
+      const networkResponseData: ApiResponse[] = [];
+
+      // Listen for API response data with proper event
+      client.on("Network.responseReceived", async (event) => {
+        try {
+          const response = event.response;
+          const url = response.url;
+
+          // Look for API endpoints by common patterns
+          // This generic approach works for many sites that load data dynamically
+          if (
+            // Common API URL patterns
+            url.includes("/api/") ||
+            url.includes("/data/") ||
+            url.includes("/search") ||
+            url.includes("/find") ||
+            url.includes("json") ||
+            url.includes("list") ||
+            // Content types that likely contain data
+            response.mimeType.includes("json") ||
+            response.mimeType.includes("application/javascript") ||
+            // Any URL parameter that suggests data
+            url.includes("query=") ||
+            url.includes("q=") ||
+            url.includes("filter=") ||
+            url.includes("id=")
+          ) {
+            console.log(`Found potential API endpoint: ${url}`);
+
+            // Get the response body
+            const responseBody = await client.send("Network.getResponseBody", {
+              requestId: event.requestId,
+            });
+
+            // Store the response for later processing
+            if (responseBody && responseBody.body) {
+              networkResponseData.push({
+                url,
+                content: responseBody.body,
+                contentType: response.mimeType || "",
+              });
+              console.log(`Captured API data from: ${url}`);
+            }
+          }
+        } catch (error) {
+          console.warn("Error intercepting network response:", error);
+        }
+      });
 
       // Set a more realistic viewport
       await page.setViewport({
@@ -303,6 +369,69 @@ export class WebScraper {
         timeout: this.options.timeout || 30000,
       });
 
+      // Handle form interactions if enabled
+      if (this.options.formInteraction?.enabled) {
+        console.log("Form interaction is enabled, processing form...");
+        try {
+          // Store reference to formInteraction to avoid TypeScript errors
+          const formInteraction = this.options.formInteraction;
+
+          // Fill form fields if provided
+          if (formInteraction.fields && formInteraction.fields.length > 0) {
+            for (const field of formInteraction.fields) {
+              // Wait for the field to be available
+              await page.waitForSelector(field.selector, { timeout: 5000 });
+
+              // Handle different field types
+              switch (field.type) {
+                case "text":
+                  await page.type(field.selector, field.value);
+                  break;
+                case "select":
+                  await page.select(field.selector, field.value);
+                  break;
+                case "checkbox":
+                  if (field.value === "true") {
+                    await page.click(field.selector);
+                  }
+                  break;
+                case "radio":
+                  await page.click(field.selector);
+                  break;
+              }
+
+              // Small delay between interactions to appear more human-like
+              await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+          }
+
+          // Click submit button if provided
+          if (formInteraction.submitButtonSelector) {
+            await page.waitForSelector(formInteraction.submitButtonSelector, {
+              timeout: 5000,
+            });
+            await page.click(formInteraction.submitButtonSelector);
+
+            // Wait for results to load
+            if (formInteraction.waitForSelector) {
+              // Wait for a specific element to appear
+              await page.waitForSelector(formInteraction.waitForSelector, {
+                timeout: this.options.timeout || 30000,
+              });
+            } else {
+              // Default wait time after submission
+              await new Promise((resolve) =>
+                setTimeout(resolve, formInteraction.waitTime || 2000)
+              );
+            }
+
+            console.log("Form submitted and waited for results");
+          }
+        } catch (error) {
+          console.warn("Form interaction failed:", error);
+        }
+      }
+
       // Scroll down slightly to simulate user behavior and trigger lazy loading
       await page.evaluate(() => {
         window.scrollBy(0, 300);
@@ -318,10 +447,68 @@ export class WebScraper {
       // Extract emails from the rendered content
       const emails = extractEmails(content);
 
-      // Process the extracted data
+      // Also extract emails from API responses
+      let apiContent = "";
+      console.log(
+        `Processing ${networkResponseData.length} captured API responses`
+      );
+
+      for (const response of networkResponseData) {
+        try {
+          console.log(`Processing response from: ${response.url}`);
+
+          // Try parsing as JSON, handling any potential format
+          const jsonData = JSON.parse(response.content);
+          console.log("API response parsed successfully");
+
+          // For debugging
+          console.log(
+            "API response contains:",
+            Object.keys(jsonData).join(", ")
+          );
+
+          // Enhanced generic processing of API responses to handle any JSON structure
+          console.log("Processing API response using universal extractor");
+
+          // Use our new method to extract data from any JSON structure
+          const extractedData = extractDataFromJson(jsonData);
+
+          // Add any found emails to our collection
+          if (extractedData.emails.length > 0) {
+            console.log(
+              `Found ${extractedData.emails.length} emails in API response`
+            );
+            emails.push(...extractedData.emails);
+          }
+
+          // Add context information from the JSON data
+          apiContent += extractedData.contextText;
+
+          // Also log phone numbers found, which will be included in the context
+          if (extractedData.phoneNumbers.length > 0) {
+            console.log(
+              `Found ${extractedData.phoneNumbers.length} phone numbers in API response`
+            );
+          }
+
+          // Log discovered URLs which could be followed for additional information
+          if (extractedData.urls.length > 0) {
+            console.log(
+              `Found ${extractedData.urls.length} URLs in API response`
+            );
+          }
+        } catch (error) {
+          console.warn("Error processing API response:", error);
+        }
+      }
+
+      // Combine page content with API content for context extraction
+      const combinedContent = content + "\n" + apiContent;
+
+      // Process the extracted data (remove duplicates in processContactData)
       return processContactData(
         emails,
-        content,
+        combinedContent,
         url,
         this.options.includePhoneNumbers
       );
