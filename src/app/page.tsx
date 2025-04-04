@@ -1,133 +1,156 @@
+/**
+ * Main application page - Email Scraper for Marketing
+ */
 "use client";
 
 import { useState } from "react";
-import ScrapeForm from "@/components/ScrapeForm";
-import ResultsDisplay from "@/components/ResultsDisplay";
 import { ScrapingOptions, ScrapingResult } from "@/lib/scraper/types";
+import BatchUploader from "@/components/BatchUploader";
+import ResultsDisplay from "@/components/ResultsDisplay";
+import ScrapeProgressDisplay from "@/components/ScrapeProgressDisplay";
+import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
 
 export default function Home() {
-  const [isLoading, setIsLoading] = useState(false);
+  const [results, setResults] = useState<ScrapingResult[]>([]);
+  const [currentResult, setCurrentResult] = useState<ScrapingResult | null>(
+    null
+  );
+  const [isScrapingBatch, setIsScrapingBatch] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [isDownloading, setIsDownloading] = useState(false);
-  const [result, setResult] = useState<ScrapingResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (url: string, options: ScrapingOptions) => {
-    setIsLoading(true);
-    setError(null);
+  // Handle batch scraping from Excel/CSV file
+  const handleBatchScrape = async (urls: string[]) => {
+    setIsScrapingBatch(true);
+    setBatchProgress({ current: 0, total: urls.length });
+    setResults([]);
 
-    try {
-      const response = await fetch("/api/scrape", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url, options }),
-      });
+    const batchResults: ScrapingResult[] = [];
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to scrape website");
+    for (let i = 0; i < urls.length; i++) {
+      try {
+        const url = urls[i];
+        setBatchProgress({ current: i + 1, total: urls.length });
+
+        // Use smart auto-detection options
+        const smartOptions: ScrapingOptions = {
+          followLinks: true,
+          maxDepth: 2,
+          useHeadless: true,
+          usePlaywright: true,
+          includePhoneNumbers: true,
+          timeout: 60000,
+        };
+
+        const response = await fetch("/api/scrape", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ url, options: smartOptions }),
+        });
+
+        const result: ScrapingResult = await response.json();
+        batchResults.push(result);
+        setResults([...batchResults]);
+        setCurrentResult(result);
+      } catch (error) {
+        console.error(`Error scraping URL at index ${i}:`, error);
+        batchResults.push({
+          url: urls[i],
+          contacts: [],
+          timestamp: new Date().toISOString(),
+          status: "error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+        setResults([...batchResults]);
       }
-
-      const data = await response.json();
-      setResult(data);
-    } catch (err) {
-      console.error("Error scraping website:", err);
-      setError(
-        err instanceof Error ? err.message : "An unknown error occurred"
-      );
-    } finally {
-      setIsLoading(false);
     }
+
+    setIsScrapingBatch(false);
   };
 
+  // Handle downloading results in Excel or CSV format
   const handleDownload = async (format: "xlsx" | "csv") => {
-    if (!result) return;
+    if (!results.length) return;
 
     setIsDownloading(true);
-
     try {
-      // Instead of triggering a new scrape, send the existing result to a new endpoint
-      const response = await fetch("/api/export", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ result, format }),
-      });
+      const allContacts = results.flatMap((result) =>
+        result.contacts.map((contact) => ({
+          ...contact,
+          source: result.url,
+          scrapeTime: new Date(result.timestamp).toLocaleString(),
+        }))
+      );
 
-      if (!response.ok) {
-        throw new Error("Failed to generate export file");
+      if (format === "xlsx") {
+        await exportToExcel(allContacts, "email-scraping-results");
+      } else {
+        exportToCSV(allContacts, "email-scraping-results");
       }
-
-      // Get the file as a blob
-      const blob = await response.blob();
-
-      // Create URL for the blob
-      const url = window.URL.createObjectURL(blob);
-
-      // Create a temporary link element
-      const link = document.createElement("a");
-      link.href = url;
-
-      // Get filename from Content-Disposition header or generate default one
-      const contentDisposition = response.headers.get("Content-Disposition");
-      const filename = contentDisposition
-        ? contentDisposition.split("filename=")[1].replace(/"/g, "")
-        : `contacts_${new Date().getTime()}.${format}`;
-
-      link.setAttribute("download", filename);
-      document.body.appendChild(link);
-
-      // Trigger the download
-      link.click();
-
-      // Clean up
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Error downloading file:", err);
-      setError(err instanceof Error ? err.message : "Failed to download file");
+    } catch (error) {
+      console.error("Error exporting data:", error);
+      alert("Failed to download results. Please try again.");
     } finally {
       setIsDownloading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-5xl mx-auto">
+    <main className="flex min-h-screen flex-col p-6 bg-gray-50 dark:bg-gray-900">
+      <div className="container mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-extrabold text-gray-900 dark:text-white sm:text-4xl">
-            Email Harvester
+          <h1 className="text-3xl font-bold text-gray-800 dark:text-white">
+            Coaching Email Extractor
           </h1>
-          <p className="mt-3 text-xl text-gray-500 dark:text-gray-400 sm:mt-4">
-            Extract email addresses and contact information from websites
+          <p className="text-gray-600 dark:text-gray-300 mt-2">
+            Extract coach emails, names, and titles from websites for your
+            marketing campaigns
           </p>
         </div>
 
-        {error && (
-          <div className="mb-8 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/30 rounded-md p-4">
-            <p className="text-red-700 dark:text-red-400">{error}</p>
+        {/* Main content area */}
+        <div className="space-y-6">
+          {/* Upload component */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+            <div className="mb-4">
+              <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
+                Upload Your Website List
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                Upload an Excel or CSV file with coaching websites to scrape.
+                We&apos;ll automatically extract all available contact
+                information.
+              </p>
+            </div>
+
+            <BatchUploader
+              onBatchScrape={handleBatchScrape}
+              isLoading={isScrapingBatch}
+            />
           </div>
-        )}
 
-        <ScrapeForm onSubmit={handleSubmit} isLoading={isLoading} />
+          {/* Progress display (only visible during batch scraping) */}
+          {isScrapingBatch && (
+            <ScrapeProgressDisplay
+              current={batchProgress.current}
+              total={batchProgress.total}
+              results={results}
+            />
+          )}
 
-        {result && (
-          <ResultsDisplay
-            result={result}
-            onDownload={handleDownload}
-            isDownloading={isDownloading}
-          />
-        )}
-
-        <footer className="mt-12 text-center text-sm text-gray-500 dark:text-gray-400">
-          <p>
-            Use responsibly and in accordance with website terms of service and
-            privacy policies.
-          </p>
-        </footer>
+          {/* Results display */}
+          {results.length > 0 && (
+            <ResultsDisplay
+              result={currentResult}
+              allResults={results}
+              onDownload={handleDownload}
+              isDownloading={isDownloading}
+            />
+          )}
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

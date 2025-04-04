@@ -9,6 +9,7 @@ export interface ScrapedContact {
   phone?: string;
   url?: string;
   source?: string;
+  scrapeTime?: string; // Added for export functionality
 }
 
 export interface ScrapingResult {
