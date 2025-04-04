@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { PlaywrightScraper } from "@/lib/scraper/playwrightScraper";
 import { ScrapedContact, ScrapingResult } from "@/lib/scraper/types";
 
+// Define a settings input type
+type ScraperSettingsInput = {
+  mode?: "standard" | "aggressive" | "gentle";
+  maxDepth?: number;
+  followLinks?: boolean;
+  includePhoneNumbers?: boolean;
+  browserType?: "chromium" | "firefox";
+  timeout?: number;
+};
+
 // Track active scraping sessions to enable cancellation
 const activeScrapingSessions: Map<
   string,
@@ -61,6 +71,7 @@ export async function POST(request: NextRequest) {
     // Handle different input formats - both url and urls properties, and handle single URL strings
     let urlsToScrape: string[] = [];
 
+    // Handle URL extraction
     if (body.urls) {
       // Handle urls property
       urlsToScrape = Array.isArray(body.urls) ? body.urls : [body.urls];
@@ -68,6 +79,9 @@ export async function POST(request: NextRequest) {
       // Handle url property (singular)
       urlsToScrape = [body.url];
     }
+
+    // Extract settings if provided
+    const settings = body.settings || {};
 
     // Validate we have URLs to process
     if (urlsToScrape.length === 0) {
@@ -89,9 +103,11 @@ export async function POST(request: NextRequest) {
     const writer = stream.writable.getWriter();
 
     // Start processing in the background
-    processScraping(urlsToScrape, sessionId, writer).catch((error) => {
-      console.error("Scraping process error:", error);
-    });
+    processScraping(urlsToScrape, sessionId, writer, settings).catch(
+      (error) => {
+        console.error("Scraping process error:", error);
+      }
+    );
 
     // Return the streaming response with the session ID
     return new NextResponse(stream.readable, {
@@ -113,7 +129,8 @@ export async function POST(request: NextRequest) {
 async function processScraping(
   urls: string[],
   sessionId: string,
-  writer: WritableStreamDefaultWriter
+  writer: WritableStreamDefaultWriter,
+  settings: ScraperSettingsInput = {}
 ) {
   const results: ScrapingResult[] = [];
   const errors: { url: string; error: string }[] = [];
@@ -160,14 +177,49 @@ async function processScraping(
     try {
       console.log(`Using Playwright for ${url}`);
 
-      // Run the scraper with enhanced options but with optimized settings
+      // Apply user-provided settings with fallbacks for each value
+      let maxDepth = 2;
+      let followLinks = true;
+      let timeout = 30000;
+      let browserType: "chromium" | "firefox" = "chromium";
+      let includePhoneNumbers = true;
+
+      // Apply settings based on mode if specified
+      if (settings.mode === "aggressive") {
+        console.log("Using aggressive mode settings");
+        maxDepth = 3;
+        timeout = 45000;
+      } else if (settings.mode === "gentle") {
+        console.log("Using gentle mode settings");
+        maxDepth = 1;
+        followLinks = false;
+        timeout = 20000;
+      } else {
+        console.log("Using standard mode settings");
+      }
+
+      // Override with specific settings if provided
+      if (settings.maxDepth !== undefined) maxDepth = settings.maxDepth;
+      if (settings.followLinks !== undefined)
+        followLinks = settings.followLinks;
+      if (settings.timeout !== undefined) timeout = settings.timeout;
+      if (settings.browserType) browserType = settings.browserType;
+      if (settings.includePhoneNumbers !== undefined)
+        includePhoneNumbers = settings.includePhoneNumbers;
+
+      console.log(
+        `Using settings: mode=${
+          settings.mode || "standard"
+        }, maxDepth=${maxDepth}, followLinks=${followLinks}, timeout=${timeout}ms, browser=${browserType}`
+      );
+
       const contacts: ScrapedContact[] = await scraper.scrapeWebsite(url, {
-        maxDepth: 2, // Reduced depth to improve performance
-        followLinks: true, // Follow links to find more emails
-        includePhoneNumbers: true,
+        maxDepth,
+        followLinks,
+        includePhoneNumbers,
         useHeadless: true,
-        timeout: 30000, // Reduced timeout to prevent long-running scrapes
-        browserType: "chromium",
+        timeout,
+        browserType,
       });
 
       // Add to results

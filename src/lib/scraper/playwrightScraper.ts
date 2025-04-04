@@ -6,6 +6,7 @@ import { ScrapedContact, ScrapingOptions } from "./types";
 import { extractEmails, processContactData } from "./emailExtractor";
 import { chromium, firefox, webkit, Page, Browser } from "playwright";
 import { processCoachDirectory } from "./dynamicScraper";
+import { enhancedProcessCoachDirectory } from "./advancedDynamicScraper";
 
 export class PlaywrightScraper {
   private browser: Browser | null = null;
@@ -124,7 +125,30 @@ export class PlaywrightScraper {
               "Detected coaching directory, applying specialized extraction techniques"
             );
 
-            // Use our enhanced dynamic scraper specialized for coaching websites
+            // First try the advanced scraper for better results with dynamic content
+            try {
+              console.log(
+                "Applying advanced dynamic scraper with specialized techniques"
+              );
+              const advancedContacts = await enhancedProcessCoachDirectory(
+                page,
+                currentUrl
+              );
+
+              if (advancedContacts.length > 0) {
+                console.log(
+                  `Found ${advancedContacts.length} contacts using advanced dynamic scraper`
+                );
+                allContacts.push(...advancedContacts);
+
+                // If advanced scraper found contacts, we can skip the legacy scraper
+                continue;
+              }
+            } catch (error) {
+              console.error("Error using advanced dynamic scraper:", error);
+            }
+
+            // Fall back to the legacy scraper if the advanced one didn't find anything
             try {
               const coachContacts = await processCoachDirectory(
                 page,
@@ -132,20 +156,17 @@ export class PlaywrightScraper {
               );
               if (coachContacts.length > 0) {
                 console.log(
-                  `Found ${coachContacts.length} contacts using specialized coach directory scraper`
+                  `Found ${coachContacts.length} contacts using legacy coach directory scraper`
                 );
                 allContacts.push(...coachContacts);
-
-                // If we found contacts with the specialized scraper, we might not need
-                // to continue with the generic scraping for this page
                 continue;
               }
             } catch (error) {
               console.error(
-                "Error using specialized coach directory scraper:",
+                "Error using legacy coach directory scraper:",
                 error
               );
-              // Fall back to standard scraping if the specialized scraper fails
+              // Fall back to standard scraping if both specialized scrapers fail
             }
           }
 

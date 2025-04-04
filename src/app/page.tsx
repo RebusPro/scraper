@@ -8,6 +8,7 @@ import { ScrapingResult } from "@/lib/scraper/types";
 import BatchUploader from "@/components/BatchUploader";
 import ResultsDisplay from "@/components/ResultsDisplay";
 import ScrapeProgressDisplay from "@/components/ScrapeProgressDisplay";
+import ScrapeSettingsSelector from "@/components/ScrapeSettingsSelector";
 import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
 
 export default function Home() {
@@ -20,6 +21,14 @@ export default function Home() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [errors, setErrors] = useState<{ url: string; error: string }[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [scrapeSettings, setScrapeSettings] = useState({
+    mode: "standard" as "standard" | "aggressive" | "gentle",
+    maxDepth: 2,
+    followLinks: true,
+    includePhoneNumbers: true,
+    browserType: "chromium" as "chromium" | "firefox",
+    timeout: 30000,
+  });
 
   // Handle batch scraping from Excel/CSV file
   const handleBatchScrape = async (urlList: string[]) => {
@@ -40,7 +49,10 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ urls }),
+        body: JSON.stringify({
+          urls,
+          settings: scrapeSettings,
+        }),
       });
 
       if (!response.ok) {
@@ -194,6 +206,9 @@ export default function Home() {
             Extract coach emails, names, and titles from websites for your
             marketing campaigns
           </p>
+          <div className="inline-flex items-center px-3 py-1 mt-2 text-sm font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+            Enhanced Dynamic Content Support
+          </div>
         </div>
 
         {/* Main content area */}
@@ -206,9 +221,20 @@ export default function Home() {
               </h2>
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 Upload an Excel or CSV file with coaching websites to scrape.
-                We&apos;ll automatically extract all available contact
-                information.
+                Our advanced system will automatically extract all available
+                contact information.
               </p>
+            </div>
+
+            {/* Scrape settings selector */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6 mt-6">
+              <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
+                Configure Scraping Settings
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                Choose how thoroughly to scan websites for contact information.
+              </p>
+              <ScrapeSettingsSelector onSettingsChange={setScrapeSettings} />
             </div>
 
             <BatchUploader
