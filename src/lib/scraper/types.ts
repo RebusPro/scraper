@@ -10,6 +10,7 @@ export interface ScrapedContact {
   url?: string;
   source?: string;
   scrapeTime?: string; // Added for export functionality
+  alternateEmails?: string[]; // Added for storing alternative email formats
 }
 
 export interface ScrapingResult {

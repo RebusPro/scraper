@@ -1,154 +1,108 @@
-# Enhanced Web Scraper Solution
+# Coach Email Extractor
 
-This enhanced web scraper has been designed to handle websites with dynamic content, API calls, form interactions, and various other modern web features. With these improvements, the scraper can effectively retrieve content from a wide range of websites.
+This tool helps you extract coach emails, names, and titles from websites for your marketing campaigns. It's designed to be easy to use for non-technical users while being powerful enough to handle complex websites.
 
-## Key Features & Improvements
+## How to Use the Web Interface
 
-### 1. Comprehensive Network Monitoring
+The web interface provides an easy way to extract emails from coaching websites without requiring any technical knowledge.
 
-The scraper now intelligently monitors all network traffic when using the headless browser mode:
+### Option 1: Starting the Web Interface
 
-- **Dynamic API Response Detection**: Automatically identifies potential API endpoints using intelligent pattern matching for URLs and content types.
-- **JSON Processing Engine**: Recursively processes any JSON structure, regardless of nesting level or naming conventions.
-- **Content-Type Analysis**: Detects different response types (JSON, HTML, JavaScript) and processes each accordingly.
+1. Open a terminal/command prompt
+2. Navigate to the project folder
+3. Run the following command:
+   ```
+   npm run dev
+   ```
+4. Open your web browser and go to: http://localhost:3000
 
-### 2. Flexible Form Interaction
+### Option 2: Using the Web Interface
 
-The scraper can now interact with forms and wait for dynamic content to load:
+1. **Upload an Excel or CSV file**:
 
-- **Multi-field Support**: Fill out search forms, login forms, or any interactive elements.
-- **Intelligent Wait Logic**: Waits for elements to appear, or uses a configurable timeout.
-- **Event Handling**: Properly simulates real user interactions (clicking, typing, selecting).
+   - Click on "Upload Excel/CSV" and select your file
+   - The file should contain a column with website URLs
+   - Alternatively, click on "Paste URLs" to enter website URLs manually
 
-### 3. Universal Data Extraction
+2. **Process the URLs**:
 
-Enhanced extraction capabilities that work across any website structure:
+   - After uploading or pasting URLs, click the "Process URLs" button
+   - Then click "Start Scraping" to begin extraction
 
-- **Recursive JSON Extraction**: Extracts data from any JSON structure, regardless of depth or naming conventions.
-- **Field Name Recognition**: Intelligently identifies common field patterns (email, name, phone, etc.).
-- **Context Building**: Creates useful context information even from unstructured data.
+3. **View Results**:
 
-### 4. Browser Fingerprint Evasion
+   - The system will show real-time progress as it processes each website
+   - When complete, you'll see a table of all extracted emails and contact information
 
-Improved techniques to avoid detection as a bot:
+4. **Download Results**:
+   - Click "Download as Excel" or "Download as CSV" to save the results
+   - The downloaded file will contain all extracted contacts with their source websites
 
-- **Realistic User Simulation**: Sets common browser properties to appear as a regular browser.
-- **Random Delays**: Uses slight random delays between actions to appear more human-like.
-- **Header Customization**: Uses realistic HTTP headers for all requests.
+## Using the Batch Script Directly
 
-## How to Use the Enhanced Features
+For processing large lists of websites without the web interface:
 
-### Basic Usage
-
-The basic usage remains the same:
-
-```javascript
-// Create a scraper instance
-const scraper = new WebScraper();
-
-// Scrape a website
-const result = await scraper.scrapeWebsite("https://example.com");
-```
-
-### Using Form Interaction
-
-To interact with forms on a website:
-
-```javascript
-const scraper = new WebScraper({
-  useHeadless: true, // Required for form interaction
-  formInteraction: {
-    enabled: true,
-    fields: [
-      {
-        selector: "#search-input",
-        value: "search term",
-        type: "text",
-      },
-      {
-        selector: "#state-select",
-        value: "48", // Washington state
-        type: "select",
-      },
-    ],
-    submitButtonSelector: "#search-button",
-    waitForSelector: ".results", // Wait for this element to appear after form submission
-    waitTime: 3000, // Or wait this many milliseconds
-  },
-});
-```
-
-### Advanced Example: Finding Email Addresses from Sites with Search Forms
-
-This example shows how to search a directory website for contact information:
-
-```javascript
-// Create a scraper instance with form interaction enabled
-const scraper = new WebScraper({
-  useHeadless: true,
-  formInteraction: {
-    enabled: true,
-    fields: [
-      {
-        selector: "#location",
-        value: "New York",
-        type: "text",
-      },
-      {
-        selector: "#search-radius",
-        value: "50", // 50 miles
-        type: "select",
-      },
-    ],
-    submitButtonSelector: 'button[type="submit"]',
-    waitTime: 5000,
-  },
-  // Follow links to detail pages
-  followLinks: true,
-  maxDepth: 2,
-});
-
-// Run the scraper
-const result = await scraper.scrapeWebsite(
-  "https://example-directory.com/search"
-);
-```
+1. Make sure you have an Excel or CSV file containing website URLs
+2. Open a terminal/command prompt in the project folder
+3. Run:
+   ```
+   node examples/batch-coach-scraper.mjs path/to/your/excel-file.xlsx
+   ```
+4. The script will process all URLs and save results to an Excel file in the `output` folder
 
 ## How It Works
 
-### Network Response Processing
+The Coach Email Extractor uses advanced techniques to extract contact information:
 
-For AJAX and API responses, the scraper now:
-
-1. Monitors all network requests during page load and interactions
-2. Captures responses from endpoints that match common API patterns
-3. Uses the generic JSON extractor to find emails and other data regardless of structure
-4. Combines this data with the visible page content
-
-### JSON Extraction Logic
-
-The new `extractDataFromJson` function:
-
-1. Recursively traverses any JSON structure (arrays, nested objects, etc.)
-2. Identifies fields likely to contain emails, names, phones, etc. by analyzing field names
-3. Extracts this data into a structured format for processing
-4. Returns both the extracted data and contextual information for better results
+1. **Deep Scanning**: The system follows links to contact pages and coach directories
+2. **Dynamic Content Handling**: Works with JavaScript-heavy sites that other scrapers miss
+3. **Intelligent Name Extraction**: Attempts to match emails with coach names and titles
+4. **Email Format Detection**: Identifies even obfuscated or protected email addresses
+5. **Automatic Duplicate Removal**: Ensures clean, unique contact lists
 
 ## Troubleshooting
 
-If the scraper isn't finding expected data:
+### No Results Found
 
-1. **Try enabling form interaction**: Some sites only show data after search form submission.
-2. **Increase wait time**: Some sites take longer to load dynamic content.
-3. **Enable followLinks**: Contact information is often on detail pages.
-4. **Examine the browser console**: There might be network errors or CORS issues.
+If no results are found for a specific website:
 
-## Limitations
+1. **Check URL format**: Make sure the URL is correct and includes http:// or https://
+2. **Try a more specific page**: Instead of the homepage, try linking directly to a "Coaches", "Staff", or "Contact" page
+3. **Check if the site needs login**: Some sites hide contact information behind login pages
+4. **Try the batch script**: Sometimes the batch script works better for certain sites
 
-The scraper may still face challenges with:
+### Slow Processing
 
-- Websites using advanced bot protection (reCAPTCHA v3, etc.)
-- Single-page applications that require complex session handling
-- Websites that perform client-side encryption of responses
+For websites that take a long time to process:
 
-For these cases, site-specific customizations may be needed, but the core scraper is now much more capable of handling a wide range of modern websites.
+1. Process fewer websites at once
+2. Use the batch script for large lists (it's optimized for background processing)
+3. Try during off-peak hours when websites may load faster
+
+## Sample Website Lists
+
+We've included sample files to help you get started:
+
+- `public/sample-websites.csv`: Contains example coaching websites for testing
+- You can use this as a template for your own website lists
+
+## Success Stories
+
+This tool has been successfully used for:
+
+- Hockey coaching email campaigns
+- Figure skating instructor outreach
+- Sport organization marketing
+- Tournament and event promotion
+
+## Advanced Features
+
+The system includes several advanced features for special cases:
+
+1. **Alternative Email Formats**: For some coaches, multiple possible email formats are provided
+2. **URL Normalization**: Automatically fixes and standardizes website URLs
+3. **Intelligent Scraping**: Adapts its approach based on website structure
+
+---
+
+If you have any questions about using this tool, please contact the developer for assistance.

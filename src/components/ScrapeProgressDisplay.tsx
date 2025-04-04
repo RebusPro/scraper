@@ -45,8 +45,12 @@ const ScrapeProgressDisplay: React.FC<ScrapeProgressDisplayProps> = ({
   const emailsFound = results.length;
 
   return (
-    <div className={styles.progressContainer}>
-      <h2 className={styles.progressTitle}>Scraping Progress</h2>
+    <div
+      className={
+        "bg-white dark:bg-gray-800 p-4 rounded shadow " + styles.container
+      }
+    >
+      <h2 className={"text-white text-xl font-bold pb-4"}>Scraping Progress</h2>
 
       {isInProgress && (
         <>
@@ -59,22 +63,29 @@ const ScrapeProgressDisplay: React.FC<ScrapeProgressDisplayProps> = ({
 
           <div className={styles.progressDetails}>
             <p>
-              <strong>{effectiveProcessedUrls}</strong> of{" "}
-              <strong>{effectiveTotalUrls}</strong> websites processed (
-              {percentComplete}%)
+              <strong>
+                {" "}
+                <span className="text-white">{effectiveProcessedUrls}</span>
+              </strong>{" "}
+              <span className="text-gray-400">of </span>
+              <strong>
+                <span className="text-white">{effectiveTotalUrls}</span>
+              </strong>{" "}
+              <span className="text-gray-400">websites processed </span>
+              <span className="text-white">({percentComplete})%</span>
             </p>
             <div className={styles.statusCounts}>
               <div className={styles.statusItem}>
                 <span className={styles.successDot}></span>
-                <span>Success: {succeeded}</span>
+                <span className="text-white">Success: {succeeded}</span>
               </div>
               <div className={styles.statusItem}>
                 <span className={styles.errorDot}></span>
-                <span>Errors: {errors.length}</span>
+                <span className="text-white">Errors: {errors.length}</span>
               </div>
               <div className={styles.statusItem}>
                 <span className={styles.emailDot}></span>
-                <span>Emails found: {emailsFound}</span>
+                <span className="text-white">Emails found: {emailsFound}</span>
               </div>
             </div>
           </div>

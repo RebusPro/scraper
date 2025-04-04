@@ -53,33 +53,58 @@ export default function Home() {
         setSessionId(newSessionId);
       }
 
-      // Process the response as JSON
-      const result = await response.json();
-
-      // Update the state with the results
-      if (result.results && result.results.length > 0) {
-        setResults(result.results);
-        setCurrentResult(result.results[0]);
+      // Process the response as a stream for real-time updates
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get response reader");
       }
 
-      // Update errors
-      if (result.errors && result.errors.length > 0) {
-        setErrors(result.errors);
-      }
+      // Read the stream
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      // Update progress
-      setBatchProgress({
-        current: result.processed || 0,
-        total: result.total || urls.length,
-      });
+        // Process the chunk
+        const chunk = new TextDecoder().decode(value);
+        const result = JSON.parse(chunk);
 
-      // Mark as done
-      if (result.done) {
-        setIsScrapingBatch(false);
+        // Update the state with the results
+        if (result.results && result.results.length > 0) {
+          setResults(result.results);
+          setCurrentResult(result.results[0]);
+        }
+
+        // Update errors
+        if (result.errors && result.errors.length > 0) {
+          setErrors(result.errors);
+        }
+
+        // Update progress
+        setBatchProgress({
+          current: result.processed || 0,
+          total: result.total || urls.length,
+        });
+
+        // Mark as done
+        if (result.done) {
+          setIsScrapingBatch(false);
+          break;
+        }
       }
     } catch (error) {
       console.error("Error in batch scrape:", error);
       setIsScrapingBatch(false);
+
+      // Cancel any active scraping
+      if (sessionId) {
+        try {
+          await fetch(`/api/scrape?sessionId=${sessionId}`, {
+            method: "DELETE",
+          });
+        } catch (cancelError) {
+          console.error("Error cancelling scrape:", cancelError);
+        }
+      }
 
       // Create a generic error result
       const batchResults: ScrapingResult[] = urls.map((url) => ({

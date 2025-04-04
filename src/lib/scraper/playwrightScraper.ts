@@ -2,9 +2,10 @@
  * Enhanced Playwright-based web scraper
  * Specialized for handling dynamic websites with improved reliability
  */
-import { ScrapedContact } from "./types";
+import { ScrapedContact, ScrapingOptions } from "./types";
 import { extractEmails, processContactData } from "./emailExtractor";
 import { chromium, firefox, webkit, Page, Browser } from "playwright";
+import { processCoachDirectory } from "./dynamicScraper";
 
 export class PlaywrightScraper {
   private browser: Browser | null = null;
@@ -24,14 +25,7 @@ export class PlaywrightScraper {
    */
   async scrapeWebsite(
     url: string,
-    options: {
-      maxDepth?: number;
-      followLinks?: boolean;
-      includePhoneNumbers?: boolean;
-      useHeadless?: boolean;
-      timeout?: number;
-      browserType?: "chromium" | "firefox" | "webkit";
-    } = {}
+    options: ScrapingOptions = {}
   ): Promise<ScrapedContact[]> {
     // Set defaults
     const useHeadless = options.useHeadless ?? true;
@@ -118,19 +112,41 @@ export class PlaywrightScraper {
             .waitForLoadState("networkidle", { timeout })
             .catch(() => {});
 
-          // Specialized handling for San Diego Hosers and similar sites
-          if (currentUrl.includes("sandiegohosers.org")) {
-            // Look specifically for contact info
-            await this.processCoachingSite(page, currentUrl, allContacts);
-          }
-
-          // Check if we're on a coaching site and apply special handling
+          // Check if we're on a coaching site and apply enhanced specialized handling
           const isCoachSite = await this.detectCoachSite(page);
-          if (isCoachSite) {
+          if (
+            isCoachSite ||
+            currentUrl.includes("coach") ||
+            currentUrl.includes("staff") ||
+            currentUrl.includes("team")
+          ) {
             console.log(
-              "Applying coach directory-specific extraction strategies"
+              "Detected coaching directory, applying specialized extraction techniques"
             );
-            await this.processCoachingSite(page, currentUrl, allContacts);
+
+            // Use our enhanced dynamic scraper specialized for coaching websites
+            try {
+              const coachContacts = await processCoachDirectory(
+                page,
+                currentUrl
+              );
+              if (coachContacts.length > 0) {
+                console.log(
+                  `Found ${coachContacts.length} contacts using specialized coach directory scraper`
+                );
+                allContacts.push(...coachContacts);
+
+                // If we found contacts with the specialized scraper, we might not need
+                // to continue with the generic scraping for this page
+                continue;
+              }
+            } catch (error) {
+              console.error(
+                "Error using specialized coach directory scraper:",
+                error
+              );
+              // Fall back to standard scraping if the specialized scraper fails
+            }
           }
 
           // Extract page content
@@ -499,63 +515,111 @@ export class PlaywrightScraper {
    * Detect if the current page is a coaching site or directory
    */
   private async detectCoachSite(page: Page): Promise<boolean> {
-    // Keywords that suggest a coaching site
-    const coachKeywords = [
-      "coach",
-      "coaching",
-      "coaches",
-      "hockey",
-      "sports",
-      "team",
-      "league",
-      "athletic",
-    ];
+    return await page.evaluate(() => {
+      const html = document.documentElement.innerHTML.toLowerCase();
+      const title = document.title.toLowerCase();
+      const url = window.location.href.toLowerCase();
 
-    const content = await page.content();
-    const lowerContent = content.toLowerCase();
+      // More comprehensive list of coaching directory indicators
+      const coachKeywords = [
+        "coach directory",
+        "coaching staff",
+        "our coaches",
+        "meet the coaches",
+        "coaching team",
+        "coach profiles",
+        "team roster",
+        "staff directory",
+        "coaching roster",
+        "instructor",
+        "trainers",
+        "faculty",
+        "personnel",
+        "meet our team",
+        "our staff",
+        "coaches list",
+        "team members",
+        "our instructors",
+        "meet the instructors",
+        "meet the staff",
+      ];
 
-    // Check if the content contains multiple coach keywords
-    let keywordCount = 0;
-    for (const keyword of coachKeywords) {
-      if (lowerContent.includes(keyword)) {
-        keywordCount++;
+      // Check for coaching directories in HTML content
+      for (const keyword of coachKeywords) {
+        if (html.includes(keyword)) return true;
       }
-    }
 
-    return keywordCount >= 3; // Return true if 3 or more keywords are found
+      // Check page title
+      for (const keyword of ["coach", "staff", "team", "roster", "directory"]) {
+        if (title.includes(keyword)) return true;
+      }
+
+      // Check URL patterns that often indicate coach directories
+      for (const pattern of [
+        "/coach",
+        "/staff",
+        "/team",
+        "/about",
+        "/roster",
+        "/directory",
+        "/personnel",
+      ]) {
+        if (url.includes(pattern)) return true;
+      }
+
+      // Check for common coach directory UI patterns
+      const coachCards = document.querySelectorAll(
+        '.coach-card, .staff-card, .team-member, .profile-card, [class*="coach"], [class*="staff"]'
+      );
+      if (coachCards.length > 2) return true;
+
+      return false;
+    });
   }
 
   /**
-   * Find contact and about page links
+   * Find links to contact or about pages
    */
   private async findContactLinks(page: Page): Promise<string[]> {
-    // Find links that likely lead to contact/about pages
     const links = await page.$$eval(
-      "a[href*='contact'], a[href*='about'], a:has-text('Contact'), a:has-text('About')",
+      "a",
       (elements, baseUrl) => {
         return elements
           .map((el) => {
             const href = el.getAttribute("href");
             if (!href) return null;
 
-            // Handle relative URLs
+            // Only look for contact, about, team, staff pages
+            const text = el.textContent || "";
+            const lowerText = text.toLowerCase();
+            const lowerHref = href.toLowerCase();
+
+            const isContactPage =
+              lowerText.includes("contact") ||
+              lowerText.includes("about") ||
+              lowerText.includes("staff") ||
+              lowerText.includes("team") ||
+              lowerHref.includes("contact") ||
+              lowerHref.includes("about") ||
+              lowerHref.includes("staff") ||
+              lowerHref.includes("team");
+
+            if (!isContactPage) return null;
+
+            // Make relative URLs absolute
             if (href.startsWith("/")) {
-              try {
-                return new URL(href, baseUrl).href;
-              } catch {
-                return null;
-              }
-            } else if (href.startsWith("http")) {
-              return href;
-            } else {
-              try {
-                return new URL(href, baseUrl).href;
-              } catch {
-                return null;
-              }
+              return baseUrl + href;
+            } else if (
+              !href.startsWith("http") &&
+              !href.startsWith("mailto:") &&
+              !href.startsWith("#")
+            ) {
+              return baseUrl + "/" + href;
             }
+
+            return href;
           })
-          .filter(Boolean);
+          .filter((href) => href !== null);
       },
       page.url()
     );

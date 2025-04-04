@@ -84,80 +84,169 @@ export async function POST(request: NextRequest) {
       cancelled: false,
     });
 
-    // Process URLs
-    const results: ScrapingResult[] = [];
-    const errors: { url: string; error: string }[] = [];
+    // Create a streaming response
+    const stream = new TransformStream();
+    const writer = stream.writable.getWriter();
 
-    // Process each URL
-    for (const url of urlsToScrape) {
-      try {
-        console.log(`Using Playwright for ${url}`);
+    // Start processing in the background
+    processScraping(urlsToScrape, sessionId, writer).catch((error) => {
+      console.error("Scraping process error:", error);
+    });
 
-        // Run the scraper with enhanced options
-        const contacts: ScrapedContact[] = await scraper.scrapeWebsite(url, {
-          maxDepth: 3, // Search deeper in the site structure
-          followLinks: true, // Follow links to find more emails
-          includePhoneNumbers: true,
-          useHeadless: true,
-          timeout: 60000,
-          browserType: "chromium",
-        });
-
-        // Add to results
-        results.push({
-          url,
-          contacts: contacts || [],
-          timestamp: new Date().toISOString(),
-          status: "success",
-        });
-      } catch (error) {
-        console.error(`Error scraping ${url}:`, error);
-        errors.push({
-          url,
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-
-        // Add an error result
-        results.push({
-          url,
-          contacts: [],
-          timestamp: new Date().toISOString(),
-          status: "error",
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    }
-
-    // Clean up
-    try {
-      await scraper.close();
-    } catch (error) {
-      console.error("Error closing browser:", error);
-    }
-
-    // Remove from active sessions
-    activeScrapingSessions.delete(sessionId);
-
-    // Return the results
-    return NextResponse.json(
-      {
-        done: true,
-        processed: urlsToScrape.length,
-        total: urlsToScrape.length,
-        results,
-        errors,
+    // Return the streaming response with the session ID
+    return new NextResponse(stream.readable, {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Scraping-Session-Id": sessionId,
       },
-      {
-        headers: {
-          "X-Scraping-Session-Id": sessionId,
-        },
-      }
-    );
+    });
   } catch (error) {
-    console.error("Error processing scrape request:", error);
+    console.error("Error starting scrape:", error);
     return NextResponse.json(
-      { error: "Failed to process scraping request" },
+      { error: "Failed to start scraping" },
       { status: 500 }
     );
   }
+}
+
+// Process URLs in the background and stream results
+async function processScraping(
+  urls: string[],
+  sessionId: string,
+  writer: WritableStreamDefaultWriter
+) {
+  const results: ScrapingResult[] = [];
+  const errors: { url: string; error: string }[] = [];
+  const processedUrls: string[] = [];
+
+  // Get the session
+  const session = activeScrapingSessions.get(sessionId);
+  if (!session) {
+    await writer.write(
+      JSON.stringify({
+        done: true,
+        error: "Session not found",
+      })
+    );
+    await writer.close();
+    return;
+  }
+
+  const { scraper } = session;
+
+  // Send initial update
+  await writer.write(
+    JSON.stringify({
+      done: false,
+      processed: 0,
+      total: urls.length,
+      results: [],
+      errors: [],
+      remainingUrls: [...urls],
+    })
+  );
+
+  // Process each URL
+  for (let i = 0; i < urls.length; i++) {
+    // Check if scraping was cancelled
+    if (activeScrapingSessions.get(sessionId)?.cancelled) {
+      console.log(`Scraping cancelled for session ${sessionId}`);
+      break;
+    }
+
+    const url = urls[i];
+    const remainingUrls = urls.slice(i);
+
+    try {
+      console.log(`Using Playwright for ${url}`);
+
+      // Run the scraper with enhanced options but with optimized settings
+      const contacts: ScrapedContact[] = await scraper.scrapeWebsite(url, {
+        maxDepth: 2, // Reduced depth to improve performance
+        followLinks: true, // Follow links to find more emails
+        includePhoneNumbers: true,
+        useHeadless: true,
+        timeout: 30000, // Reduced timeout to prevent long-running scrapes
+        browserType: "chromium",
+      });
+
+      // Add to results
+      const result: ScrapingResult = {
+        url,
+        contacts: contacts || [],
+        timestamp: new Date().toISOString(),
+        status: "success",
+      };
+
+      results.push(result);
+      processedUrls.push(url);
+    } catch (error) {
+      console.error(`Error scraping ${url}:`, error);
+      errors.push({
+        url,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      // Add an error result
+      results.push({
+        url,
+        contacts: [],
+        timestamp: new Date().toISOString(),
+        status: "error",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      processedUrls.push(url);
+    }
+
+    // Update progress
+    await writer.write(
+      JSON.stringify({
+        done: false,
+        processed: processedUrls.length,
+        total: urls.length,
+        results,
+        errors,
+        remainingUrls,
+      })
+    );
+  }
+
+  // Clean up after completion or cancellation
+  try {
+    // Close the browser
+    await scraper.close();
+  } catch (error) {
+    console.error("Error closing browser:", error);
+  }
+
+  // Remove from active sessions
+  activeScrapingSessions.delete(sessionId);
+
+  // Send final update with a meaningful message if no results were found
+  const finalResults = results.filter(
+    (r) => r.contacts && r.contacts.length > 0
+  );
+  const noResultsUrls = results
+    .filter((r) => !r.contacts || r.contacts.length === 0)
+    .map((r) => r.url);
+
+  await writer.write(
+    JSON.stringify({
+      done: true,
+      processed: processedUrls.length,
+      total: urls.length,
+      results: finalResults,
+      errors: [
+        ...errors,
+        ...noResultsUrls.map((url) => ({
+          url,
+          error: "No contact information found on this website",
+        })),
+      ],
+      remainingUrls: [],
+    })
+  );
+
+  await writer.close();
 }
