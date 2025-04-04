@@ -1,5 +1,6 @@
 /**
  * Component for uploading Excel/CSV files containing website URLs
+ * or manually entering URLs via text input
  */
 "use client";
 
@@ -24,6 +25,8 @@ export default function BatchUploader({
   const [file, setFile] = useState<File | null>(null);
   const [urls, setUrls] = useState<string[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
+  const [inputMode, setInputMode] = useState<"file" | "text">("file");
+  const [textInput, setTextInput] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Handle drag events
@@ -150,6 +153,62 @@ export default function BatchUploader({
     }
   };
 
+  // Process text input for URLs
+  const handleTextInputProcess = () => {
+    setParseError(null);
+
+    try {
+      if (!textInput.trim()) {
+        setParseError("Please enter at least one URL.");
+        return;
+      }
+
+      // Try different patterns to extract URLs:
+      // 1. Split by newlines (most common format)
+      // 2. Split by commas
+      // 3. Split by spaces
+      let candidates: string[] = [];
+
+      // First try newlines
+      candidates = textInput.split(/\r?\n/).filter((line) => line.trim());
+
+      // If we only have one candidate, try commas (common in CSV paste)
+      if (candidates.length === 1) {
+        candidates = textInput.split(",").filter((item) => item.trim());
+      }
+
+      // If we still only have one candidate, try spaces (rare but possible)
+      if (candidates.length === 1) {
+        candidates = textInput.split(/\s+/).filter((item) => item.trim());
+      }
+
+      // Process candidates to valid URLs
+      const extractedUrls: string[] = [];
+
+      candidates.forEach((candidate) => {
+        // Clean up the candidate
+        const cleaned = candidate.trim().replace(/["']/g, "");
+
+        if (cleaned && isValidUrl(cleaned)) {
+          extractedUrls.push(normalizeUrl(cleaned));
+        }
+      });
+
+      // Filter duplicates and set URLs
+      const uniqueUrls = [...new Set(extractedUrls)];
+      setUrls(uniqueUrls);
+
+      if (uniqueUrls.length === 0) {
+        setParseError(
+          "No valid URLs found. URLs must include domain names (e.g., example.com)."
+        );
+      }
+    } catch (error) {
+      console.error("Error processing text input:", error);
+      setParseError("Error processing text input. Please check the format.");
+    }
+  };
+
   // Check if a string is a valid URL
   const isValidUrl = (string: string) => {
     try {
@@ -158,9 +217,10 @@ export default function BatchUploader({
         string.includes(".") &&
         (string.startsWith("http://") ||
           string.startsWith("https://") ||
-          string.startsWith("www."))
+          string.startsWith("www.") ||
+          /^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}/.test(string)) // domain-like pattern
       );
-    } catch {
+    } catch (_) {
       return false;
     }
   };
@@ -180,58 +240,132 @@ export default function BatchUploader({
     }
   };
 
+  // Toggle input mode
+  const toggleInputMode = (mode: "file" | "text") => {
+    setInputMode(mode);
+    // Clear previous data when switching modes
+    setUrls([]);
+    setFile(null);
+    setTextInput("");
+    setParseError(null);
+  };
+
   return (
     <div className="space-y-4">
-      {/* File drag & drop area */}
-      <div
-        className={`relative border-2 border-dashed rounded-lg p-8 text-center ${
-          dragActive
-            ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20"
-            : "border-gray-300 dark:border-gray-700"
-        } transition-colors duration-200`}
-        onDragEnter={handleDrag}
-        onDragOver={handleDrag}
-        onDragLeave={handleDrag}
-        onDrop={handleDrop}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          onChange={handleChange}
-          className="hidden"
-        />
-
-        <div className="space-y-2">
-          <svg
-            className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-            />
-          </svg>
-          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-            Drag & drop your spreadsheet or click to browse
-          </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Accepts Excel (.xlsx, .xls) or CSV (.csv) files
-          </p>
-          <button
-            type="button"
-            onClick={handleButtonClick}
-            className="mt-2 inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Browse Files
-          </button>
-        </div>
+      {/* Input mode switch */}
+      <div className="flex border rounded-md overflow-hidden divide-x">
+        <button
+          type="button"
+          onClick={() => toggleInputMode("file")}
+          className={`flex-1 py-2 px-4 text-sm font-medium ${
+            inputMode === "file"
+              ? "bg-indigo-600 text-white"
+              : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+          }`}
+        >
+          Upload Excel/CSV
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleInputMode("text")}
+          className={`flex-1 py-2 px-4 text-sm font-medium ${
+            inputMode === "text"
+              ? "bg-indigo-600 text-white"
+              : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+          }`}
+        >
+          Paste URLs
+        </button>
       </div>
+
+      {/* File upload area */}
+      {inputMode === "file" && (
+        <div
+          className={`relative border-2 border-dashed rounded-lg p-8 text-center ${
+            dragActive
+              ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20"
+              : "border-gray-300 dark:border-gray-700"
+          } transition-colors duration-200`}
+          onDragEnter={handleDrag}
+          onDragOver={handleDrag}
+          onDragLeave={handleDrag}
+          onDrop={handleDrop}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={handleChange}
+            className="hidden"
+          />
+
+          <div className="space-y-2">
+            <svg
+              className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+              />
+            </svg>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+              Drag & drop your spreadsheet or click to browse
+            </h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Accepts Excel (.xlsx, .xls) or CSV (.csv) files
+            </p>
+            <button
+              type="button"
+              onClick={handleButtonClick}
+              className="mt-2 inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            >
+              Browse Files
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Text input area */}
+      {inputMode === "text" && (
+        <div className="space-y-3">
+          <div className="border rounded-lg p-4 bg-white dark:bg-gray-800">
+            <label
+              htmlFor="urls-input"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+            >
+              Paste URLs (one per line or comma-separated)
+            </label>
+            <textarea
+              id="urls-input"
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              rows={8}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white text-sm"
+              placeholder="https://example.com&#10;https://anotherexample.com&#10;https://third-example.org"
+            />
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={handleTextInputProcess}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                disabled={!textInput.trim()}
+              >
+                Process URLs
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Enter each URL on a new line or separate them with commas. URLs
+              will be automatically normalized.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Error message */}
       {parseError && (
@@ -245,7 +379,8 @@ export default function BatchUploader({
         <div className="space-y-3">
           <div className="flex justify-between items-center">
             <h3 className="text-md font-medium text-gray-900 dark:text-gray-100">
-              {urls.length} URLs extracted from {file?.name}
+              {urls.length} URLs{" "}
+              {file ? `extracted from ${file.name}` : "processed"}
             </h3>
             <button
               type="button"

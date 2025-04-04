@@ -1,10 +1,12 @@
 /**
- * Email and contact information extractor
+ * Enhanced email and contact information extractor
  */
 import { ScrapedContact } from "./types";
 
-// Regular expression for finding emails
-const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+// Improved regular expression for finding emails
+// Added lookaheads to exclude common false positives
+const EMAIL_REGEX =
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?!\.(?:png|jpg|jpeg|gif|svg|webp))\b/g;
 
 // Regular expression for finding phone numbers (more precise pattern)
 const PHONE_REGEX =
@@ -23,14 +25,94 @@ const IGNORE_PHONE_PATTERNS = [
   /\d{3,}[-.\s]\d{3,}/, // Any pattern with 3+ digits on each side of separator
 ];
 
+// Common false positive patterns for emails
+const UI_TEXT_FALSE_POSITIVES = [
+  "password@",
+  "email@",
+  "username@",
+  "login@",
+  "user@",
+  "account@",
+  "${email}@",
+  "(email)@",
+  "[email]@",
+  "your-email@",
+];
+
+// Common image and asset file patterns
+const IMAGE_ASSET_PATTERNS = [
+  "@2x",
+  "@3x",
+  "@4x",
+  ".yji-",
+  ".svg",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".ico",
+  ".asset",
+];
+
 /**
- * Extract emails from text content
+ * Extract emails from text content with enhanced filtering
  */
 export function extractEmails(content: string): string[] {
+  // Extract potential emails
   const emails = content.match(EMAIL_REGEX) || [];
+
   // Filter out tracking/monitoring and non-contact emails
-  const filteredEmails = emails.filter((email) => !isNonContactEmail(email));
+  const filteredEmails = emails.filter((email) => {
+    // Skip if it's a non-contact email or contains UI text patterns
+    if (isNonContactEmail(email)) return false;
+
+    // Skip common image asset filenames
+    if (containsImageAssetPattern(email)) return false;
+
+    // Skip UI text false positives
+    if (containsUITextPattern(email)) return false;
+
+    // Skip emails with very long local parts (before @) that are likely not real
+    const localPart = email.split("@")[0];
+    if (localPart && localPart.length > 30) return false;
+
+    return true;
+  });
+
   return [...new Set(filteredEmails)]; // Remove duplicates
+}
+
+/**
+ * Check if an email contains patterns common in image and asset filenames
+ */
+function containsImageAssetPattern(email: string): boolean {
+  for (const pattern of IMAGE_ASSET_PATTERNS) {
+    if (email.includes(pattern)) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if an email contains UI text patterns that are common false positives
+ */
+function containsUITextPattern(email: string): boolean {
+  for (const pattern of UI_TEXT_FALSE_POSITIVES) {
+    if (email.includes(pattern)) return true;
+  }
+
+  // Check for common UI text surrounding emails
+  const domain = email.split("@")[1];
+  const isProbablyUIText = [
+    "example.com",
+    "domain.com",
+    "yourdomain.com",
+    "email.com",
+    "mail.com",
+    "website.com",
+  ].includes(domain);
+
+  return isProbablyUIText;
 }
 
 /**
@@ -50,6 +132,7 @@ export function isNonContactEmail(email: string): boolean {
     "no-response",
     "postmaster",
     "mailer-daemon",
+    "placeholder.invalid", // Used for our own placeholder emails
   ];
 
   // Check for blocked domains
@@ -123,8 +206,7 @@ export function extractPhoneNumbers(content: string): string[] {
 }
 
 /**
- * Extract name from context around an email
- * This is a heuristic approach that tries to find names near emails
+ * Extract name from context around an email - Enhanced with multiple patterns
  */
 export function extractNameFromContext(
   email: string,
@@ -134,22 +216,47 @@ export function extractNameFromContext(
   const emailIndex = content.indexOf(email);
   if (emailIndex === -1) return undefined;
 
-  // Get a window of text around the email (100 chars before and after)
-  const startIndex = Math.max(0, emailIndex - 100);
-  const endIndex = Math.min(content.length, emailIndex + email.length + 100);
+  // Get a window of text around the email (250 chars before and after - increased window size)
+  const startIndex = Math.max(0, emailIndex - 250);
+  const endIndex = Math.min(content.length, emailIndex + email.length + 250);
   const contextWindow = content.substring(startIndex, endIndex);
 
-  // Look for common name patterns before the email
-  // This is a simplified approach - in a real implementation, you might use NLP
-  const nameBeforeRegex =
-    /([A-Z][a-z]+ [A-Z][a-z]+)[\s\n]*(?=.*?\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b)/;
-  const nameMatch = contextWindow.match(nameBeforeRegex);
+  // Multiple name pattern strategies
 
-  return nameMatch ? nameMatch[1] : undefined;
+  // 1. Common format: "Name - Title"
+  const dashFormatMatch = contextWindow.match(
+    /([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)\s*-\s*[A-Za-z\s]+/
+  );
+  if (dashFormatMatch) return dashFormatMatch[1];
+
+  // 2. Common format: "Title: Name"
+  const colonFormatMatch = contextWindow.match(
+    /(?:Coach|Director|Coordinator|Manager|Instructor|Trainer)(?::|s?:)?\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)/i
+  );
+  if (colonFormatMatch) return colonFormatMatch[1];
+
+  // 3. Standard name before email pattern
+  const nameBeforeRegex =
+    /([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)[\s\n]*(?=.*?\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b)/;
+  const nameMatch = contextWindow.match(nameBeforeRegex);
+  if (nameMatch) return nameMatch[1];
+
+  // 4. Common format: Name followed by email on next line
+  const nameAboveEmailRegex =
+    /([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)\s*[\r\n]+\s*[\r\n]*\s*[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+  const nameAboveMatch = contextWindow.match(nameAboveEmailRegex);
+  if (nameAboveMatch) return nameAboveMatch[1];
+
+  // 5. Name in brackets or parentheses
+  const bracketNameRegex = /[\(\[\{]([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)[\)\]\}]/;
+  const bracketMatch = contextWindow.match(bracketNameRegex);
+  if (bracketMatch) return bracketMatch[1];
+
+  return undefined;
 }
 
 /**
- * Extract title/position from context around an email or name
+ * Extract title/position from context around an email or name - Enhanced version
  */
 export function extractTitleFromContext(
   nameOrEmail: string,
@@ -159,19 +266,35 @@ export function extractTitleFromContext(
   const targetIndex = content.indexOf(nameOrEmail);
   if (targetIndex === -1) return undefined;
 
-  // Get a window of text around the target (150 chars before and after)
-  const startIndex = Math.max(0, targetIndex - 150);
+  // Get a wider window of text around the target (250 chars before and after)
+  const startIndex = Math.max(0, targetIndex - 250);
   const endIndex = Math.min(
     content.length,
-    targetIndex + nameOrEmail.length + 150
+    targetIndex + nameOrEmail.length + 250
   );
   const contextWindow = content.substring(startIndex, endIndex);
 
-  // Common job titles in coaching/sports context
+  // Multiple title pattern strategies
+
+  // 1. Common format: "Name - Title"
+  const dashFormatMatch = contextWindow.match(
+    /[A-Z][a-z]+(?:\s[A-Z][a-z]+)+\s*-\s*([A-Za-z\s&]+?)(?:[\r\n]|$|,|\.|<)/
+  );
+  if (dashFormatMatch && dashFormatMatch[1]?.trim())
+    return dashFormatMatch[1].trim();
+
+  // 2. Common format: "Title: Name"
+  const titleBeforeNameRegex =
+    /([A-Za-z\s&]+(?:Coach|Director|Coordinator|Manager|Instructor|Trainer))(?::|s?:)?\s+[A-Z][a-z]+/i;
+  const titleBeforeMatch = contextWindow.match(titleBeforeNameRegex);
+  if (titleBeforeMatch) return titleBeforeMatch[1].trim();
+
+  // 3. Common job titles in coaching/sports context - enhanced list
   const titlePatterns = [
     /\b(Head Coach|Assistant Coach|Coach|Director|Manager|Coordinator|Instructor|Trainer)\b/i,
-    /\b(Figure Skating Director|Hockey Director|Program Director|Athletic Director)\b/i,
-    /\b(President|Vice President|CEO|Owner|Founder)\b/i,
+    /\b(Figure Skating Director|Hockey Director|Program Director|Athletic Director|Learn to Skate Coordinator)\b/i,
+    /\b(President|Vice President|CEO|Owner|Founder|Administrator|Supervisor)\b/i,
+    /\b(Program Manager|Skating School Director|Youth Hockey Director|Staff Coach)\b/i,
   ];
 
   for (const pattern of titlePatterns) {
@@ -196,6 +319,11 @@ export function processContactData(
 
   // Process each email
   for (const email of emails) {
+    // Skip emails that are likely UI text or false positives
+    if (containsUITextPattern(email) || email.includes("${email}")) {
+      continue;
+    }
+
     const name = extractNameFromContext(email, content);
     const title = name
       ? extractTitleFromContext(name, content)
