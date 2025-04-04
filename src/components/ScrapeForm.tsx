@@ -20,6 +20,7 @@ export default function ScrapeForm({ onSubmit, isLoading }: ScrapeFormProps) {
   const [advancedOptions, setAdvancedOptions] = useState(false);
   const [followLinks, setFollowLinks] = useState(false);
   const [useHeadless, setUseHeadless] = useState(true);
+  const [usePlaywright, setUsePlaywright] = useState(false);
   const [enableFormInteraction, setEnableFormInteraction] = useState(false);
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [submitButtonSelector, setSubmitButtonSelector] = useState("");
@@ -65,6 +66,7 @@ export default function ScrapeForm({ onSubmit, isLoading }: ScrapeFormProps) {
     const options = {
       followLinks,
       useHeadless,
+      usePlaywright,
       maxDepth: followLinks ? 2 : 1,
       formInteraction,
     };
@@ -177,6 +179,22 @@ export default function ScrapeForm({ onSubmit, isLoading }: ScrapeFormProps) {
                   className="ml-2 block text-sm text-gray-700 dark:text-gray-300"
                 >
                   Use browser rendering (for JavaScript-heavy sites)
+                </label>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="usePlaywright"
+                  checked={usePlaywright}
+                  onChange={(e) => setUsePlaywright(e.target.checked)}
+                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                />
+                <label
+                  htmlFor="usePlaywright"
+                  className="ml-2 block text-sm text-gray-700 dark:text-gray-300"
+                >
+                  Use Playwright engine (for complex dynamic websites)
                 </label>
               </div>
 

@@ -7,6 +7,7 @@ import puppeteer from "puppeteer";
 import { extractEmails, processContactData } from "./emailExtractor";
 import { extractDataFromJson } from "./jsonExtractor";
 import { ScrapedContact, ScrapingOptions, ScrapingResult } from "./types";
+import { PlaywrightScraper } from "./playwrightScraper";
 
 export class WebScraper {
   private defaultOptions: ScrapingOptions = {
@@ -19,6 +20,8 @@ export class WebScraper {
       enabled: false,
       waitTime: 2000, // Default wait time after form submission
     },
+    // Default to false, but can be enabled for complex sites
+    usePlaywright: false,
   };
 
   constructor(private options: ScrapingOptions = {}) {
@@ -52,24 +55,76 @@ export class WebScraper {
         );
       }
 
-      // If static scraping failed or found no emails and Puppeteer is enabled, try with browser rendering
-      if (
-        (staticScrapingFailed || contacts.length === 0) &&
-        this.options.useHeadless
-      ) {
-        try {
-          const dynamicContacts = await this.scrapeDynamicContent(
-            normalizedUrl
-          );
-          contacts = [...contacts, ...dynamicContacts];
-        } catch (error) {
-          console.warn(`Dynamic scraping failed for ${normalizedUrl}:`, error);
-          dynamicScrapingFailed = true;
-          errorMessages.push(
-            `Dynamic scraping error: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
+      // If static scraping failed or found no emails, try with dynamic browser rendering
+      if (staticScrapingFailed || contacts.length === 0) {
+        // First try with Playwright if enabled (better for complex dynamic sites)
+        if (this.options.usePlaywright) {
+          try {
+            console.log(`Using Playwright for ${normalizedUrl}`);
+            const playwrightScraper = new PlaywrightScraper();
+            const playwrightContacts = await playwrightScraper.scrapeWebsite(
+              normalizedUrl,
+              this.options
+            );
+            contacts = [...contacts, ...playwrightContacts];
+            console.log(
+              `Playwright found ${playwrightContacts.length} contacts`
+            );
+          } catch (error) {
+            console.warn(
+              `Playwright scraping failed for ${normalizedUrl}:`,
+              error
+            );
+            dynamicScrapingFailed = true;
+            errorMessages.push(
+              `Playwright scraping error: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+
+            // Fall back to Puppeteer if Playwright fails and Puppeteer is enabled
+            if (this.options.useHeadless) {
+              try {
+                console.log(`Falling back to Puppeteer for ${normalizedUrl}`);
+                const puppeteerContacts = await this.scrapeDynamicContent(
+                  normalizedUrl
+                );
+                contacts = [...contacts, ...puppeteerContacts];
+              } catch (puppeteerError) {
+                console.warn(
+                  `Puppeteer scraping failed for ${normalizedUrl}:`,
+                  puppeteerError
+                );
+                errorMessages.push(
+                  `Puppeteer scraping error: ${
+                    puppeteerError instanceof Error
+                      ? puppeteerError.message
+                      : String(puppeteerError)
+                  }`
+                );
+              }
+            }
+          }
+        }
+        // Otherwise use Puppeteer if enabled
+        else if (this.options.useHeadless) {
+          try {
+            const puppeteerContacts = await this.scrapeDynamicContent(
+              normalizedUrl
+            );
+            contacts = [...contacts, ...puppeteerContacts];
+          } catch (error) {
+            console.warn(
+              `Puppeteer scraping failed for ${normalizedUrl}:`,
+              error
+            );
+            dynamicScrapingFailed = true;
+            errorMessages.push(
+              `Dynamic scraping error: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+          }
         }
       }
 
