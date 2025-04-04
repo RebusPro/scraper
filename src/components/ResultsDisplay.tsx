@@ -21,14 +21,20 @@ export default function ResultsDisplay({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
 
-  // Get all contacts from all results
-  const allContacts = allResults.flatMap((r) => r.contacts);
+  // Get all contacts from all results, ensuring we have valid contacts
+  const allContacts = allResults
+    .flatMap((r) => r.contacts || [])
+    .filter(
+      (contact): contact is ScrapedContact =>
+        !!contact && typeof contact === "object"
+    );
 
   // Filter contacts based on search term and selected site
   const filteredContacts = allContacts.filter((contact) => {
     const matchesSearch =
       !searchTerm ||
-      contact.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (contact.email &&
+        contact.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (contact.name &&
         contact.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (contact.title &&
@@ -42,11 +48,11 @@ export default function ResultsDisplay({
   // Group sites by domain for the filter dropdown
   const sites = [...new Set(allResults.map((r) => r.url))];
 
-  // Compute stats
+  // Compute stats with null checks
   const totalSites = allResults.length;
   const totalEmails = allContacts.length;
-  const emailsWithNames = allContacts.filter((c) => c.name).length;
-  const emailsWithTitles = allContacts.filter((c) => c.title).length;
+  const emailsWithNames = allContacts.filter((c) => c && c.name).length;
+  const emailsWithTitles = allContacts.filter((c) => c && c.title).length;
 
   return (
     <div className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">

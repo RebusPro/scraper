@@ -4,7 +4,7 @@
 "use client";
 
 import { useState } from "react";
-import { ScrapingOptions, ScrapingResult } from "@/lib/scraper/types";
+import { ScrapingResult } from "@/lib/scraper/types";
 import BatchUploader from "@/components/BatchUploader";
 import ResultsDisplay from "@/components/ResultsDisplay";
 import ScrapeProgressDisplay from "@/components/ScrapeProgressDisplay";
@@ -18,56 +18,86 @@ export default function Home() {
   const [isScrapingBatch, setIsScrapingBatch] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [isDownloading, setIsDownloading] = useState(false);
+  const [errors, setErrors] = useState<{ url: string; error: string }[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   // Handle batch scraping from Excel/CSV file
-  const handleBatchScrape = async (urls: string[]) => {
+  const handleBatchScrape = async (urlList: string[]) => {
+    if (!urlList || urlList.length === 0) return;
+
+    // Make sure we have an array even for a single URL
+    const urls = Array.isArray(urlList) ? urlList : [urlList];
+
     setIsScrapingBatch(true);
     setBatchProgress({ current: 0, total: urls.length });
     setResults([]);
+    setErrors([]);
 
-    const batchResults: ScrapingResult[] = [];
+    try {
+      // Send all URLs to the API at once
+      const response = await fetch("/api/scrape", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ urls }),
+      });
 
-    for (let i = 0; i < urls.length; i++) {
-      try {
-        const url = urls[i];
-        setBatchProgress({ current: i + 1, total: urls.length });
-
-        // Use smart auto-detection options
-        const smartOptions: ScrapingOptions = {
-          followLinks: true,
-          maxDepth: 2,
-          useHeadless: true,
-          usePlaywright: true,
-          includePhoneNumbers: true,
-          timeout: 60000,
-        };
-
-        const response = await fetch("/api/scrape", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ url, options: smartOptions }),
-        });
-
-        const result: ScrapingResult = await response.json();
-        batchResults.push(result);
-        setResults([...batchResults]);
-        setCurrentResult(result);
-      } catch (error) {
-        console.error(`Error scraping URL at index ${i}:`, error);
-        batchResults.push({
-          url: urls[i],
-          contacts: [],
-          timestamp: new Date().toISOString(),
-          status: "error",
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
-        setResults([...batchResults]);
+      if (!response.ok) {
+        throw new Error(`API returned status ${response.status}`);
       }
-    }
 
-    setIsScrapingBatch(false);
+      // Store the session ID for cancellation
+      const newSessionId = response.headers.get("X-Scraping-Session-Id");
+      if (newSessionId) {
+        setSessionId(newSessionId);
+      }
+
+      // Process the response as JSON
+      const result = await response.json();
+
+      // Update the state with the results
+      if (result.results && result.results.length > 0) {
+        setResults(result.results);
+        setCurrentResult(result.results[0]);
+      }
+
+      // Update errors
+      if (result.errors && result.errors.length > 0) {
+        setErrors(result.errors);
+      }
+
+      // Update progress
+      setBatchProgress({
+        current: result.processed || 0,
+        total: result.total || urls.length,
+      });
+
+      // Mark as done
+      if (result.done) {
+        setIsScrapingBatch(false);
+      }
+    } catch (error) {
+      console.error("Error in batch scrape:", error);
+      setIsScrapingBatch(false);
+
+      // Create a generic error result
+      const batchResults: ScrapingResult[] = urls.map((url) => ({
+        url,
+        contacts: [],
+        timestamp: new Date().toISOString(),
+        status: "error",
+        message: error instanceof Error ? error.message : "Unknown error",
+      }));
+
+      setResults(batchResults);
+      setErrors(
+        urls.map((url) => ({
+          url,
+          error: error instanceof Error ? error.message : "Unknown error",
+        }))
+      );
+    }
   };
 
   // Handle downloading results in Excel or CSV format
@@ -77,11 +107,13 @@ export default function Home() {
     setIsDownloading(true);
     try {
       const allContacts = results.flatMap((result) =>
-        result.contacts.map((contact) => ({
-          ...contact,
-          source: result.url,
-          scrapeTime: new Date(result.timestamp).toLocaleString(),
-        }))
+        result.contacts && result.contacts.length > 0
+          ? result.contacts.map((contact) => ({
+              ...contact,
+              source: result.url,
+              scrapeTime: new Date(result.timestamp).toLocaleString(),
+            }))
+          : []
       );
 
       if (format === "xlsx") {
@@ -94,6 +126,35 @@ export default function Home() {
       alert("Failed to download results. Please try again.");
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  // Handle cancellation of scraping
+  const handleCancelScraping = async () => {
+    if (!sessionId) {
+      console.error("No session ID available for cancellation");
+      setIsScrapingBatch(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/scrape?sessionId=${sessionId}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        setIsScrapingBatch(false);
+      } else {
+        const errorText = await response.text();
+        console.error("Failed to cancel scraping:", errorText);
+
+        // If we can't cancel, still update the UI
+        setIsScrapingBatch(false);
+      }
+    } catch (error) {
+      console.error("Error cancelling scrape:", error);
+      // If we can't cancel, still update the UI
+      setIsScrapingBatch(false);
     }
   };
 
@@ -134,9 +195,13 @@ export default function Home() {
           {/* Progress display (only visible during batch scraping) */}
           {isScrapingBatch && (
             <ScrapeProgressDisplay
-              current={batchProgress.current}
-              total={batchProgress.total}
+              inProgress={isScrapingBatch}
+              processedUrls={batchProgress.current}
+              totalUrls={batchProgress.total}
               results={results}
+              errors={errors}
+              remainingUrls={[]}
+              onCancel={handleCancelScraping}
             />
           )}
 
