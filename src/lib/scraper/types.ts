@@ -87,4 +87,5 @@ export interface ScrapingOptions {
   browserType?: "chromium" | "firefox" | "webkit"; // For Playwright browser selection
   usePlaywright?: boolean; // Whether to use Playwright instead of Puppeteer for dynamic scraping
   mode?: "standard" | "aggressive" | "gentle"; // The scraping mode intensity
+  maxPages?: number; // Maximum number of pages to visit for performance
 }

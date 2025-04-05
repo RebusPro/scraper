@@ -82,7 +82,7 @@ export function extractEmails(content: string): string[] {
   return [
     ...new Set(
       allMatches
-        .map((email) => email.toLowerCase().trim())
+        .map((email) => cleanEmail(email.toLowerCase()))
         .filter((email) => {
           // Filter out common false positives and example emails
           return (
@@ -101,7 +101,13 @@ export function extractEmails(content: string): string[] {
             !/\d+\.\d+\.\d+/.test(email) && // Skip version numbers
             email.indexOf("@") === email.lastIndexOf("@") && // Ensure only one @ symbol
             // Additional filters for package names and tracking IDs
+            // Website platform tracking and analytics IDs
             !email.includes("@sentry") && // Exclude sentry tracking
+            !/@sentry[\.-]/.test(email) && // More specific sentry pattern
+            !/[a-f0-9]{24,}@/.test(email) && // Exclude long hash IDs (Sentry, etc.)
+            !email.includes("wixpress.com") && // Exclude Wix platform emails
+            !email.endsWith("wix.com") && // Exclude other Wix domains
+            // JavaScript package references
             !email.includes("-js@") && // Exclude packages like core-js
             !email.includes("-bundle@") && // Exclude bundles like core-js-bundle
             !email.includes("-polyfill@") && // Exclude polyfills
@@ -118,6 +124,28 @@ export function extractEmails(content: string): string[] {
 }
 
 /**
+ * Decode and clean an email address
+ */
+function cleanEmail(email: string): string {
+  // First decode any URL-encoded characters (like %20 for space)
+  let cleaned = email;
+  try {
+    // Try to decode if it contains URL encoding
+    if (email.includes("%")) {
+      cleaned = decodeURIComponent(email);
+    }
+  } catch {
+    // If decoding fails, use the original
+    cleaned = email;
+  }
+
+  // Trim spaces and remove any remaining %20 (encoded spaces)
+  cleaned = cleaned.trim().replace(/%20/g, "");
+
+  return cleaned;
+}
+
+/**
  * Extract emails from text content
  */
 export function extractEmailsFromText(text: string): string[] {
@@ -126,6 +154,9 @@ export function extractEmailsFromText(text: string): string[] {
 
   // Extract all email addresses
   const matches = normalizedText.match(EMAIL_REGEX) || [];
+
+  // Clean and decode each email address
+  return matches.map(cleanEmail);
 
   // Filter out invalid/common emails and convert to lowercase
   return matches
