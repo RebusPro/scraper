@@ -45,11 +45,15 @@ export async function DELETE(request: NextRequest) {
   const session = activeScrapingSessions.get(sessionId);
   if (session) {
     session.cancelled = true;
+    console.log(`Marked session ${sessionId} as cancelled`);
+
     try {
-      // Close the browser
+      // Close the browser but DON'T remove the session
+      // This allows the processing loop to detect the cancellation
       await session.scraper.close();
-      // Remove from active sessions
-      activeScrapingSessions.delete(sessionId);
+
+      // Note: We intentionally keep the session in the map with cancelled=true
+      // so that ongoing processing can detect it and abort gracefully
       return NextResponse.json({ success: true });
     } catch (error) {
       console.error("Error cancelling scrape:", error);
@@ -185,10 +189,27 @@ async function processScraping(
 
   // Process each URL
   for (let i = 0; i < urls.length; i++) {
-    // Check if scraping was cancelled
+    // Check if scraping was cancelled - immediately terminate and notify client
     if (activeScrapingSessions.get(sessionId)?.cancelled) {
       console.log(`Scraping cancelled for session ${sessionId}`);
-      break;
+
+      // Send final cancellation update to client before closing
+      await writer.write(
+        encoder.encode(
+          JSON.stringify({
+            done: true,
+            cancelled: true,
+            processed: processedUrls.length,
+            total: urls.length,
+            results: results, // Send the results we've gathered so far
+            errors: [...errors],
+            remainingUrls: urls.slice(i),
+          })
+        )
+      );
+
+      await writer.close();
+      return; // Exit the function immediately
     }
 
     const url = urls[i];

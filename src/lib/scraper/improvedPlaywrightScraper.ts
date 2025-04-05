@@ -706,6 +706,14 @@ export class ImprovedPlaywrightScraper {
               )
                 return false;
 
+              // Filter out GPS coordinates (like /@33.6025076)
+              if (
+                email.startsWith("/@") ||
+                /\/@\d+\.\d+/.test(email) ||
+                /^@\d+\.\d+/.test(email)
+              )
+                return false;
+
               // Filter out version numbers
               if (/^[a-zA-Z0-9_-]+@\d+\.\d+\.\d+$/.test(email)) return false;
 
@@ -905,6 +913,14 @@ export class ImprovedPlaywrightScraper {
                       email.includes("wixpress.com") ||
                       email.endsWith("wix.com") ||
                       /[a-f0-9]{24,}@/.test(email)
+                    )
+                      return false;
+
+                    // Filter out GPS coordinates (like /@33.6025076)
+                    if (
+                      email.startsWith("/@") ||
+                      /\/@\d+\.\d+/.test(email) ||
+                      /^@\d+\.\d+/.test(email)
                     )
                       return false;
 
