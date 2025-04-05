@@ -71,7 +71,7 @@ export default function ResultsDisplay({
   return (
     <div className="w-full bg-gray-800 dark:bg-gray-800 rounded-lg shadow-md p-6">
       {/* Debug section - only visible during development */}
-      <div className="mb-4 p-3 bg-gray-900 border border-yellow-200 rounded text-sm">
+      {/* <div className="mb-4 p-3 bg-gray-900 border border-yellow-200 rounded text-sm">
         <div className="font-bold text-yellow-800">Debug Info:</div>
         <div>Total Sites: {totalSites}</div>
         <div>Total Emails: {totalEmails}</div>
@@ -93,7 +93,7 @@ export default function ResultsDisplay({
             )}
           </pre>
         </div>
-      </div>
+      </div> */}
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-semibold text-gray-800 dark:text-white">
