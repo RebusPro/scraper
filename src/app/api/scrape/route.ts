@@ -246,19 +246,26 @@ async function processScraping(
       processedUrls.push(url);
     }
 
-    // Update progress - use proper encoding to ensure valid JSON
-    await writer.write(
-      encoder.encode(
-        JSON.stringify({
-          done: false,
-          processed: processedUrls.length,
-          total: urls.length,
-          results,
-          errors,
-          remainingUrls,
-        })
-      )
+    // Update progress - add detailed logging for debugging
+    const progressUpdate = {
+      done: false,
+      processed: processedUrls.length,
+      total: urls.length,
+      results,
+      errors,
+      remainingUrls,
+    };
+
+    // Log email counts to help debug UI issues
+    const emailCount = results.reduce(
+      (sum, r) => sum + (r.contacts ? r.contacts.length : 0),
+      0
     );
+    console.log(
+      `Progress update: ${processedUrls.length}/${urls.length} processed. Found ${emailCount} emails so far.`
+    );
+
+    await writer.write(encoder.encode(JSON.stringify(progressUpdate)));
   }
 
   // Clean up after completion or cancellation
@@ -297,7 +304,7 @@ async function processScraping(
         done: true,
         processed: processedUrls.length,
         total: urls.length,
-        results: finalResults,
+        results: results, // Send ALL results, not just filtered ones
         errors: [
           ...errors,
           ...noResultsUrls.map((url) => ({

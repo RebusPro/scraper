@@ -12,6 +12,43 @@ import ScrapeProgressDisplay from "@/components/ScrapeProgressDisplay";
 import SimplifiedScrapeSettingsSelector from "@/components/SimplifiedScrapeSettingsSelector";
 import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
 
+/**
+ * Helper function to safely try to parse JSON
+ * Returns the parsed object or null if parsing fails
+ */
+function tryParseJSON(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Try to find the last valid JSON object in the text
+    // This handles cases where we have multiple JSON objects in the stream
+    const lastBrace = text.lastIndexOf("}");
+    if (lastBrace > 0) {
+      try {
+        // Find the last opening brace that has a matching closing brace
+        let openBraceIndex = -1;
+        let braceCount = 0;
+        for (let i = lastBrace; i >= 0; i--) {
+          if (text[i] === "}") braceCount++;
+          if (text[i] === "{") braceCount--;
+          if (braceCount === 0) {
+            openBraceIndex = i;
+            break;
+          }
+        }
+
+        if (openBraceIndex >= 0) {
+          const possibleJSON = text.substring(openBraceIndex, lastBrace + 1);
+          return JSON.parse(possibleJSON);
+        }
+      } catch {
+        // Silent fail, we'll return null below
+      }
+    }
+    return null;
+  }
+}
+
 export default function Home() {
   const [results, setResults] = useState<ScrapingResult[]>([]);
   const [currentResult, setCurrentResult] = useState<ScrapingResult | null>(
@@ -75,55 +112,134 @@ export default function Home() {
 
       // Buffer to accumulate data across chunks
       let buffer = "";
+      let lastValidResult = null;
 
       // Read the stream
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log("Stream done signal received");
+          break;
+        }
 
         // Decode the chunk and add to buffer
-        buffer += new TextDecoder().decode(value);
+        const newContent = new TextDecoder().decode(value);
+        buffer += newContent;
 
         try {
           // Try to parse the JSON from the buffer
-          const result = JSON.parse(buffer);
-          // If successful, reset the buffer
-          buffer = "";
+          const result = tryParseJSON(buffer);
 
-          // Update the state with the results
-          if (result.results && result.results.length > 0) {
-            setResults(result.results);
-            setCurrentResult(result.results[0]);
+          if (result) {
+            // Always log result for debugging
+            console.log("Received streaming result:", {
+              done: result.done,
+              processed: result.processed,
+              total: result.total,
+              resultCount: result.results?.length || 0,
+              emailCount: result.results?.reduce(
+                (sum: number, r: ScrapingResult) =>
+                  sum + (r.contacts?.length || 0),
+                0
+              ),
+            });
+
+            // Save last valid result for error recovery
+            lastValidResult = result;
+
+            // Clear buffer after successful parse
+            buffer = "";
+
+            // Update the state with the results
+            if (result.results && result.results.length > 0) {
+              setResults(result.results);
+              setCurrentResult(result.results[0]);
+            }
+
+            // Update errors
+            if (result.errors && result.errors.length > 0) {
+              setErrors(result.errors);
+            }
+
+            // Update progress
+            setBatchProgress({
+              current: result.processed || 0,
+              total: result.total || urls.length,
+            });
+
+            // Mark as done
+            if (result.done) {
+              console.log("SCRAPING COMPLETE - FINAL RESULTS:", {
+                totalResults: result.results?.length || 0,
+                totalEmails:
+                  result.results?.reduce(
+                    (sum: number, r: ScrapingResult) =>
+                      sum + (r.contacts?.length || 0),
+                    0
+                  ) || 0,
+              });
+
+              // Force update UI state to refresh everything
+              setIsScrapingBatch(false);
+
+              // Make sure we have the most complete data
+              if (result.results && result.results.length > 0) {
+                console.log(
+                  "Final data set - forcing refresh of UI with complete data"
+                );
+                setResults(result.results);
+                setCurrentResult(result.results[0]);
+              }
+
+              // Exit the loop
+              break;
+            }
           }
+        } catch (parseError) {
+          console.error("Error parsing stream chunk:", parseError);
 
-          // Update errors
-          if (result.errors && result.errors.length > 0) {
-            setErrors(result.errors);
-          }
-
-          // Update progress
-          setBatchProgress({
-            current: result.processed || 0,
-            total: result.total || urls.length,
-          });
-
-          // Mark as done
-          if (result.done) {
-            setIsScrapingBatch(false);
-            break;
-          }
-        } catch {
           // If parsing fails, we might need more data
           // But if the buffer gets too large, something's wrong
           if (buffer.length > 50000) {
             console.error("Buffer too large, resetting");
             buffer = "";
           }
+
+          // If we already have results, don't let a JSON parsing error prevent completion
+          if (results.length > 0) {
+            console.log("Handling graceful completion despite parse error");
+            console.log(
+              `Current results count: ${results.length} with ${results.reduce(
+                (total, r) => total + (r.contacts?.length || 0),
+                0
+              )} total emails`
+            );
+
+            // Make the results available in the UI even if stream processing fails
+            setIsScrapingBatch(false);
+
+            // Try to recover using last valid result
+            if (lastValidResult) {
+              console.log("Using last valid result to recover from error");
+              if (
+                lastValidResult.results &&
+                lastValidResult.results.length > 0
+              ) {
+                setResults(lastValidResult.results);
+                setCurrentResult(lastValidResult.results[0]);
+              }
+            }
+          }
         }
       }
     } catch (error) {
       console.error("Error in batch scrape:", error);
       setIsScrapingBatch(false);
+
+      // Ensure we show any results we already have
+      if (results.length > 0) {
+        console.log("Showing available results despite error");
+      }
 
       // Cancel any active scraping
       if (sessionId) {

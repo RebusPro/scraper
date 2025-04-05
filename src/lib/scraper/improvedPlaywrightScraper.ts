@@ -158,9 +158,19 @@ export class ImprovedPlaywrightScraper {
             }
           }
 
-          // Check if this is a coach directory
+          // Determine if this is a coaching site (internal classification)
           const isCoachDir = await this.detectCoachSite(page);
-          console.log(`Is coaching site: ${isCoachDir}`);
+          // Only log in advanced debugging mode
+          if (
+            process.env.NODE_ENV === "development" &&
+            process.env.DEBUG_SCRAPER
+          ) {
+            console.log(
+              `[Advanced Debug] Content classification: ${
+                isCoachDir ? "Coaching site" : "General site"
+              }`
+            );
+          }
 
           if (isCoachDir) {
             // Use specialized handling for coach directories

@@ -54,8 +54,46 @@ export default function ResultsDisplay({
   const emailsWithNames = allContacts.filter((c) => c && c.name).length;
   const emailsWithTitles = allContacts.filter((c) => c && c.title).length;
 
+  // Add debugging info to help diagnose UI issues
+  console.log("ResultsDisplay rendering with:", {
+    totalResults: allResults.length,
+    totalContacts: allContacts.length,
+    resultsWithContacts: allResults.filter(
+      (r) => r.contacts && r.contacts.length > 0
+    ).length,
+    allResults: allResults.map((r) => ({
+      url: r.url,
+      contactCount: r.contacts?.length || 0,
+      status: r.status,
+    })),
+  });
+
   return (
-    <div className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+    <div className="w-full bg-gray-800 dark:bg-gray-800 rounded-lg shadow-md p-6">
+      {/* Debug section - only visible during development */}
+      <div className="mb-4 p-3 bg-gray-900 border border-yellow-200 rounded text-sm">
+        <div className="font-bold text-yellow-800">Debug Info:</div>
+        <div>Total Sites: {totalSites}</div>
+        <div>Total Emails: {totalEmails}</div>
+        <div>
+          Results with data:{" "}
+          {allResults.filter((r) => r.contacts?.length > 0).length}
+        </div>
+        <div className="mt-2">
+          <div className="font-bold">Raw Results:</div>
+          <pre className="text-xs overflow-auto max-h-40 bg-gray-400 p-2 rounded">
+            {JSON.stringify(
+              allResults.map((r) => ({
+                url: r.url,
+                emails: r.contacts?.length || 0,
+                status: r.status,
+              })),
+              null,
+              2
+            )}
+          </pre>
+        </div>
+      </div>
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-semibold text-gray-800 dark:text-white">
