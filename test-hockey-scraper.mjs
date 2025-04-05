@@ -10,7 +10,7 @@ async function testHockeyScraper() {
   console.log('Starting hockey website test scraper...');
 
   const browser = await chromium.launch({
-    headless: false // Set to true for headless mode
+    headless: true // Run headless for faster performance
   });
 
   try {
@@ -23,16 +23,16 @@ async function testHockeyScraper() {
     });
 
     const page = await context.newPage();
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    // Wait for content to load
-    await page.waitForLoadState('networkidle').catch(() => { });
+    // Wait for content to load (reduced timeout)
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => { });
 
-    // Scroll to load all content
+    // Scroll to load all content (faster)
     console.log('Scrolling to load all content...');
-    for (let i = 0; i < 5; i++) {
-      await page.evaluate(() => window.scrollBy(0, 800));
-      await page.waitForTimeout(800);
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => window.scrollBy(0, 1200));
+      await page.waitForTimeout(300);
     }
 
     // Extract emails using multiple techniques
@@ -147,6 +147,7 @@ async function testHockeyScraper() {
   } catch (error) {
     console.error('Error in scraping process:', error);
   } finally {
+    console.log('Cleaning up resources...');
     await browser.close();
   }
 }

@@ -85,4 +85,5 @@ export interface ScrapingOptions {
   formInteraction?: FormInteraction;
   browserType?: "chromium" | "firefox" | "webkit"; // For Playwright browser selection
   usePlaywright?: boolean; // Whether to use Playwright instead of Puppeteer for dynamic scraping
+  mode?: "standard" | "aggressive" | "gentle"; // The scraping mode intensity
 }

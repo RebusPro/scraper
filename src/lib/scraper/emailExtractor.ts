@@ -51,6 +51,14 @@ export function extractEmails(content: string): string[] {
   // First extract using standard EMAIL_REGEX
   const standardMatches = normalizedContent.match(EMAIL_REGEX) || [];
 
+  // Check for specific common organizational emails that should be prioritized
+  const orgEmails = [];
+  const infoEmailMatch =
+    normalizedContent.match(/info@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+  const contactEmailMatch =
+    normalizedContent.match(/contact@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+  orgEmails.push(...infoEmailMatch, ...contactEmailMatch);
+
   // Then extract emails from JavaScript code, JSON, etc.
   const jsMatches: string[] = [];
   for (const pattern of JS_EMAIL_PATTERNS) {
@@ -66,8 +74,8 @@ export function extractEmails(content: string): string[] {
     }
   }
 
-  // Combine all matches
-  const allMatches = [...standardMatches, ...jsMatches];
+  // Combine all matches with prioritized emails first
+  const allMatches = [...orgEmails, ...standardMatches, ...jsMatches];
 
   // Filter out invalid/common emails, convert to lowercase, and remove duplicates
   return [

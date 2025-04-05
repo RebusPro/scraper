@@ -38,8 +38,13 @@ export class ImprovedPlaywrightScraper {
     const useHeadless = options.useHeadless ?? true;
     const maxDepth = options.maxDepth ?? 2;
     const followLinks = options.followLinks ?? true;
-    const timeout = options.timeout ?? 60000;
-    const browserType = options.browserType ?? "chromium";
+    const timeout = options.timeout ?? 30000; // Reduced timeout for faster performance
+
+    // Check if we're in light mode for super fast extraction
+    if (options.mode === "gentle") {
+      console.log("Using super fast extraction for light mode");
+      return await this.fastExtractEmails(url, timeout);
+    }
 
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
@@ -50,11 +55,15 @@ export class ImprovedPlaywrightScraper {
     try {
       // Create browser if not already created
       if (!this.browser) {
-        console.log(`Launching new ${browserType} browser for ${url}`);
+        console.log(
+          `Launching new ${
+            options.browserType || "chromium"
+          } browser for ${url}`
+        );
         const browserObj =
-          browserType === "firefox"
+          options.browserType === "firefox"
             ? firefox
-            : browserType === "webkit"
+            : options.browserType === "webkit"
             ? webkit
             : chromium;
 
@@ -130,9 +139,9 @@ export class ImprovedPlaywrightScraper {
                 timeout: timeout,
               });
 
-              // Wait for any dynamic content to load
+              // Wait for content to load with reduced timeout
               await page
-                .waitForLoadState("networkidle", { timeout: 10000 })
+                .waitForLoadState("networkidle", { timeout: 5000 })
                 .catch(() => {});
 
               success = true;
@@ -157,76 +166,54 @@ export class ImprovedPlaywrightScraper {
             // Use specialized handling for coach directories
             console.log("Using specialized coach directory handling");
 
-            // Try specialized sports directory processing first
+            // Try specialized sports directory processing
             try {
-              if (currentUrl.includes("travelsports.com")) {
-                console.log("Processing as Travel Sports directory");
+              // Process as generic sports directory (no hardcoded URLs)
+              console.log("Processing sports directory");
+
+              // Fast extraction approach first
+              const fastEmails = await page.evaluate(() => {
+                // This runs in the browser context
+                const email_regex =
+                  /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+                const html = document.documentElement.innerHTML;
+                return html.match(email_regex) || [];
+              });
+
+              if (fastEmails.length > 0) {
+                console.log(
+                  `Fast extraction found ${fastEmails.length} emails`
+                );
+                for (const email of fastEmails) {
+                  allContacts.push({
+                    email,
+                    source: currentUrl,
+                    confidence: "Confirmed",
+                  });
+                }
+              }
+
+              // Try with our sports directory processor
+              try {
                 const dirContacts = await processSportsDirectory(
                   page,
                   currentUrl
                 );
                 allContacts.push(...dirContacts);
-              } else if (currentUrl.includes("sandiegohosers")) {
-                // Special handling for sandiegohosers.org website
-                console.log("Processing as sandiegohosers.org site");
+              } catch (err) {
+                console.error("Error in sports directory processing:", err);
 
-                // Check for about page or navigate to it
-                let aboutPageChecked = false;
-
-                if (!currentUrl.includes("/about")) {
-                  try {
-                    // Navigate to about page
-                    console.log("Navigating to About page");
-                    const aboutLink = await page.$('a[href*="about"]');
-                    if (aboutLink) {
-                      await aboutLink.click();
-                      await page
-                        .waitForLoadState("networkidle")
-                        .catch(() => {});
-                      aboutPageChecked = true;
-                    }
-                  } catch (error) {
-                    console.error("Error navigating to About page:", error);
-                  }
-                } else {
-                  aboutPageChecked = true;
-                }
-
-                if (aboutPageChecked) {
-                  // Add hardcoded email for this specific site (from manual inspection)
-                  allContacts.push({
-                    email: "scbaldwin7@gmail.com",
-                    name: "The Hosers",
-                    source: currentUrl,
-                    confidence: "Confirmed",
-                  });
-                }
-
-                // Still do standard processing as a fallback
+                // Fall back to coach directory processing
                 try {
-                  const dirContacts = await processCoachDirectory(
+                  const stdDirContacts = await processCoachDirectory(
                     page,
                     currentUrl
                   );
-                  allContacts.push(...dirContacts);
-                } catch (err) {
+                  allContacts.push(...stdDirContacts);
+                } catch (standardErr) {
                   console.error(
-                    "Error in standard coach directory processing:",
-                    err
-                  );
-                }
-              } else {
-                // Standard coach directory handling
-                try {
-                  const dirContacts = await processCoachDirectory(
-                    page,
-                    currentUrl
-                  );
-                  allContacts.push(...dirContacts);
-                } catch (err) {
-                  console.error(
-                    "Error in standard coach directory processing:",
-                    err
+                    "Error in standard directory processing:",
+                    standardErr
                   );
                 }
               }
@@ -431,6 +418,217 @@ export class ImprovedPlaywrightScraper {
   }
 
   /**
+   * Fast email extraction for light mode - minimal processing
+   */
+  private async fastExtractEmails(
+    url: string,
+    timeout: number
+  ): Promise<ScrapedContact[]> {
+    console.log(`Fast extraction for ${url}`);
+    const contacts: ScrapedContact[] = [];
+
+    try {
+      // Launch minimal browser
+      const browser = await chromium.launch({
+        headless: true,
+        args: [
+          "--disable-extensions",
+          "--disable-gpu",
+          "--disable-dev-shm-usage",
+        ], // Disable features for speed
+      });
+
+      try {
+        const context = await browser.newContext({
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
+          viewport: { width: 1280, height: 800 },
+          javaScriptEnabled: true,
+        });
+
+        // Disable resource loading for speed
+        await context.route(
+          "**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,otf}",
+          (route) => route.abort()
+        );
+
+        const page = await context.newPage();
+
+        // Set very short timeout
+        page.setDefaultTimeout(timeout);
+
+        // Navigate with minimal waiting
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+
+        // Use multiple extraction techniques for better results
+
+        // 1. Get all emails from HTML content
+        const emails = await page.evaluate(() => {
+          const email_regex =
+            /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+          const html = document.documentElement.innerHTML;
+          const matches = html.match(email_regex) || [];
+
+          // Look for organizational emails which are common in directories
+          const orgMatches: string[] = [];
+          if (html.includes("info@")) {
+            const infoMatches =
+              html.match(/info@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+            orgMatches.push(...infoMatches);
+          }
+          if (html.includes("contact@")) {
+            const contactMatches =
+              html.match(/contact@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+            orgMatches.push(...contactMatches);
+          }
+
+          // Look for emails in data attributes which may hold contact info
+          const dataEmails: string[] = [];
+          const elements = document.querySelectorAll(
+            "[data-email], [data-contact], [data-mail]"
+          );
+          elements.forEach((el) => {
+            const dataValue =
+              el.getAttribute("data-email") ||
+              el.getAttribute("data-contact") ||
+              el.getAttribute("data-mail");
+            if (
+              dataValue &&
+              dataValue.includes("@") &&
+              dataValue.includes(".")
+            ) {
+              dataEmails.push(dataValue);
+            }
+          });
+
+          return [...new Set([...matches, ...orgMatches, ...dataEmails])];
+        });
+
+        // Add found emails to contacts
+        for (const email of emails) {
+          if (email.includes("@") && email.includes(".") && email.length > 5) {
+            contacts.push({
+              email,
+              source: url,
+              confidence: "Confirmed",
+            });
+          }
+        }
+
+        // 2. If we didn't find enough emails, try scrolling to load more content
+        if (contacts.length < 2) {
+          console.log("Doing a quick scroll to find more content");
+          await page.evaluate(() => window.scrollBy(0, 2000));
+          await page.waitForTimeout(500);
+
+          // Try extracting emails again after scrolling
+          const scrollEmails = await page.evaluate(() => {
+            const email_regex =
+              /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+            const html = document.documentElement.innerHTML;
+            return html.match(email_regex) || [];
+          });
+
+          for (const email of scrollEmails) {
+            if (
+              !contacts.some((c) => c.email === email) &&
+              email.includes("@") &&
+              email.includes(".") &&
+              email.length > 5
+            ) {
+              contacts.push({
+                email,
+                source: url,
+                confidence: "Confirmed",
+              });
+            }
+          }
+        }
+
+        // 3. Quickly look for contact page links if we still need more emails
+        if (contacts.length < 2) {
+          console.log("Looking for contact page links");
+
+          // See if we can find any contact page links
+          const contactLinks = await page.$$(
+            'a[href*="contact"], a[href*="about"]'
+          );
+
+          if (contactLinks.length > 0) {
+            try {
+              // Just click the first contact link we find
+              await contactLinks[0].click();
+              await page.waitForTimeout(1000);
+
+              // Look for emails on the contact page
+              const contactEmails = await page.evaluate(() => {
+                const email_regex =
+                  /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+                const html = document.documentElement.innerHTML;
+                return html.match(email_regex) || [];
+              });
+
+              // Add any new emails we found
+              for (const email of contactEmails) {
+                if (
+                  !contacts.some((c) => c.email === email) &&
+                  email.includes("@") &&
+                  email.includes(".") &&
+                  email.length > 5
+                ) {
+                  contacts.push({
+                    email,
+                    source: url,
+                    confidence: "Confirmed",
+                  });
+                }
+              }
+            } catch (error) {
+              console.log("Error following contact link:", error);
+            }
+          }
+        }
+
+        // 4. Look at any mailto: links
+        const mailtoEmails = await page.evaluate(() => {
+          const mailtoLinks = document.querySelectorAll('a[href^="mailto:"]');
+          const emails: string[] = [];
+
+          mailtoLinks.forEach((link) => {
+            const href = link.getAttribute("href");
+            if (href) {
+              const email = href.replace("mailto:", "").split("?")[0].trim();
+              if (email && email.includes("@")) {
+                emails.push(email);
+              }
+            }
+          });
+
+          return emails;
+        });
+
+        // Add mailto emails to contacts
+        for (const email of mailtoEmails) {
+          if (!contacts.some((c) => c.email === email)) {
+            contacts.push({
+              email,
+              source: url,
+              confidence: "Confirmed",
+            });
+          }
+        }
+      } finally {
+        await browser.close();
+      }
+    } catch (error) {
+      console.error("Error in fast extraction:", error);
+    }
+
+    console.log(`Fast extraction complete: found ${contacts.length} contacts`);
+    return contacts;
+  }
+
+  /**
    * Detect if we're on a coaching site
    */
   private async detectCoachSite(page: Page): Promise<boolean> {
@@ -502,7 +700,7 @@ export class ImprovedPlaywrightScraper {
   }
 
   /**
-   * Check if two URLs belong to the same domain
+   * Check if two URLs have the same domain
    */
   private isSameDomain(url1: string, url2: string): boolean {
     try {

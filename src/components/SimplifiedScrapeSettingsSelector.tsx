@@ -96,8 +96,10 @@ export default function SimplifiedScrapeSettingsSelector({
               : "bg-gray-100 border border-gray-300 dark:bg-gray-700 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600"
           }`}
         >
-          <div className="text-2xl mb-2">🌱</div>
-          <div className="font-medium text-gray-900 dark:text-white">Light</div>
+          <div className="text-2xl mb-2">⚡</div>
+          <div className="font-medium text-gray-900 dark:text-white">
+            Quick Scan
+          </div>
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
             Fast scanning
             <br />

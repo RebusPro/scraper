@@ -197,7 +197,7 @@ async function processScraping(
     try {
       console.log(`Processing URL: ${url}`);
 
-      // Configure mode-based settings
+      // Configure mode-based settings with fast circuit breakers
       const modeSettings = applyModeSettings(url, settings);
 
       // Enhanced logging for debugging
@@ -272,9 +272,20 @@ async function processScraping(
   // Remove from active sessions
   activeScrapingSessions.delete(sessionId);
 
-  // Send final update with a meaningful message if no results were found
+  // Send final update with all results, making sure no emails are lost
+  // Important: Include ALL results, even if they have just one contact
   const finalResults = results.filter(
     (r) => r.contacts && r.contacts.length > 0
+  );
+
+  // Debug log to ensure results are being sent correctly
+  console.log(
+    `Sending ${
+      finalResults.length
+    } results with emails to client. Total contact count: ${finalResults.reduce(
+      (sum, r) => sum + r.contacts.length,
+      0
+    )}`
   );
   const noResultsUrls = results
     .filter((r) => !r.contacts || r.contacts.length === 0)
@@ -307,7 +318,7 @@ function applyModeSettings(url: string, settings: ScraperSettingsInput) {
   // Default settings
   let maxDepth = 2;
   let followLinks = true;
-  let timeout = 30000;
+  let timeout = 15000; // Reduced timeout for faster results
   let browserType: "chromium" | "firefox" = "chromium";
   let includePhoneNumbers = true;
   let useHeadless = true;
@@ -317,7 +328,7 @@ function applyModeSettings(url: string, settings: ScraperSettingsInput) {
   if (mode === "aggressive") {
     maxDepth = 3;
     followLinks = true;
-    timeout = 60000; // Increased timeout for dynamic sites
+    timeout = 30000; // Reduced from 60000, but still allows for complex sites
     browserType = "chromium";
     includePhoneNumbers = true;
 
@@ -340,17 +351,18 @@ function applyModeSettings(url: string, settings: ScraperSettingsInput) {
       useHeadless = false;
     }
   } else if (mode === "gentle") {
-    maxDepth = 1;
+    // Super fast extraction for light mode
+    maxDepth = 0; // Do not follow any links
     followLinks = false;
-    timeout = 20000;
-    browserType = "firefox"; // Firefox can be better for simple sites
-    includePhoneNumbers = true;
+    timeout = 5000; // Extremely reduced timeout
+    browserType = "chromium"; // Chromium tends to be faster
+    includePhoneNumbers = false; // Skip phone extraction to save time
     useHeadless = true;
   } else {
     // Standard mode
     maxDepth = 2;
     followLinks = true;
-    timeout = 30000;
+    timeout = 15000; // Reduced for faster processing
     browserType = "chromium";
     includePhoneNumbers = true;
     useHeadless = true;

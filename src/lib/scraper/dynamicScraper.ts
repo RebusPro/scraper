@@ -162,26 +162,41 @@ export async function processCoachDirectory(
       }
     }
 
-    // 3. Special case for WordPress sites with encoded emails
+    // 3. Check for WordPress sites with encoded emails
     const hasEncodedEmails = await page.evaluate(() => {
       return (
         document.querySelector(".eeb-encodedEmail") !== null ||
         document.querySelector("[data-enc-email]") !== null ||
-        document.querySelector("[data-email]") !== null
+        document.querySelector("[data-email]") !== null ||
+        document.querySelector("[data-cfemail]") !== null ||
+        document.querySelector(".email-protection") !== null ||
+        document.querySelector(".__cf_email__") !== null
       );
     });
 
     if (hasEncodedEmails) {
-      console.log(
-        "Detected encoded emails, adding hardcoded email for sandiegohosers.org"
-      );
-      if (url.includes("sandiegohosers")) {
-        contacts.push({
-          email: "scbaldwin7@gmail.com",
-          name: "The Hosers",
-          source: url,
-          confidence: "Confirmed",
-        });
+      console.log("Detected encoded emails, applying specialized handling");
+
+      // Try to extract emails from script tags that might contain email patterns
+      const scriptContent = await page.evaluate(() => {
+        const scripts = Array.from(document.querySelectorAll("script"));
+        return scripts.map((s) => s.textContent || "").join("\n");
+      });
+
+      // Look for email patterns in scripts
+      const scriptEmailMatches =
+        scriptContent.match(
+          /[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g
+        ) || [];
+
+      for (const email of scriptEmailMatches) {
+        if (email && !contacts.some((c) => c.email === email)) {
+          contacts.push({
+            email,
+            source: url,
+            confidence: "Confirmed",
+          });
+        }
       }
     }
 

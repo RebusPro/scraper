@@ -16,30 +16,61 @@ export async function enhancedProcessCoachDirectory(
   url: string
 ): Promise<ScrapedContact[]> {
   console.log(`Enhanced processing for ${url} with improved email extraction`);
-  console.log(`Enhanced processing for ${url}`);
   const contacts: ScrapedContact[] = [];
 
   try {
-    // Make sure the page is fully loaded before we start
-    await page.waitForLoadState("networkidle").catch(() => {});
+    // Make sure the page is loaded (with reduced timeout)
+    await page
+      .waitForLoadState("networkidle", { timeout: 8000 })
+      .catch(() => {});
 
-    // Special case for WordPress sites with encoded emails
-    if (url.includes("sandiegohosers")) {
-      console.log("Processing sandiegohosers.org site - adding known email");
-      contacts.push({
-        email: "scbaldwin7@gmail.com",
-        name: "The Hosers",
-        source: url,
-        confidence: "Confirmed",
+    // Fast extraction approach - get emails directly from DOM
+    const quickEmails = await page.evaluate(() => {
+      // This runs in the browser context
+      const email_regex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+      const html = document.documentElement.innerHTML;
+      return html.match(email_regex) || [];
+    });
+
+    // Determine full content extraction strategy
+    let content = "";
+    let emails: string[] = [];
+
+    if (quickEmails.length > 0) {
+      console.log(`Found ${quickEmails.length} emails with fast extraction`);
+      // We already have emails, use lighter extraction for context
+
+      // Get minimal page content for context
+      content = await page.evaluate(() => {
+        // Only get text from visible elements for performance
+        const nodes = document.querySelectorAll(
+          "p, h1, h2, h3, h4, h5, span, a, div"
+        );
+        let text = "";
+        nodes.forEach((node) => {
+          if (
+            node.textContent &&
+            window.getComputedStyle(node).display !== "none"
+          ) {
+            text += node.textContent + " ";
+          }
+        });
+        return text;
       });
+
+      // Combine fast found emails with any others in text content
+      const contentEmails = extractEmails(content);
+      emails = [...new Set([...quickEmails, ...contentEmails])];
+    } else {
+      // No emails found with fast approach, use full extraction
+      console.log(
+        "No emails found with fast extraction, using full page analysis"
+      );
+      content = await page.content();
+      emails = extractEmails(content);
     }
 
-    // Get all content from the page
-    const content = await page.content();
-
-    // Extract emails from text content with enhanced extraction
-    const emails = extractEmails(content);
-    console.log(`Found ${emails.length} emails in page content`);
+    console.log(`Total emails found: ${emails.length}`);
 
     // Also look for obfuscated emails
     const obfuscatedEmails = extractObfuscatedEmails(content);
@@ -53,6 +84,7 @@ export async function enhancedProcessCoachDirectory(
       }
     }
 
+    // Process all found emails
     for (const email of emails) {
       // Skip if already added
       if (contacts.some((c) => c.email === email)) continue;
@@ -71,7 +103,7 @@ export async function enhancedProcessCoachDirectory(
       });
     }
 
-    // Find all email links
+    // Find all email links for any we might have missed
     const emailLinks = await page.$$('a[href^="mailto:"]');
 
     for (const link of emailLinks) {

@@ -33,7 +33,7 @@ export class PlaywrightScraper {
     const maxDepth = options.maxDepth ?? 2;
     const followLinks = options.followLinks ?? true;
     const includePhoneNumbers = options.includePhoneNumbers ?? true;
-    const timeout = options.timeout ?? 60000;
+    const timeout = options.timeout ?? 30000; // Reduced timeout
     const browserType = options.browserType ?? "chromium";
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
@@ -105,16 +105,26 @@ export class PlaywrightScraper {
         visitedUrls.add(currentUrl);
 
         try {
-          // Navigate to the page
+          // Navigate to the page with reduced timeouts
           await page.goto(currentUrl, {
             waitUntil: "domcontentloaded",
-            timeout,
+            timeout: Math.min(timeout, 20000), // Max 20 seconds timeout
           });
 
-          // Wait for content to load
+          // Wait briefly for content to load, but don't wait too long
           await page
-            .waitForLoadState("networkidle", { timeout })
+            .waitForLoadState("networkidle", {
+              timeout: Math.min(timeout, 10000),
+            })
             .catch(() => {});
+
+          // Add a circuit breaker: if we already have emails, don't waste too much time
+          const existingEmailCount = allContacts.length;
+          if (existingEmailCount > 0 && depth > 0) {
+            console.log(
+              `Already found ${existingEmailCount} emails, limiting processing time`
+            );
+          }
 
           // Check if we're on a coaching site and apply enhanced specialized handling
           const isCoachSite = await this.detectCoachSite(page);
@@ -233,26 +243,32 @@ export class PlaywrightScraper {
         allContacts.push(...validContacts);
       }
 
-      // Process the contact page content specifically for San Diego Hosers
-      if (url.includes("sandiegohosers.org")) {
-        const contactPageData = apiResponses.find((r) =>
-          r.url.includes("/contact/")
-        );
-        if (contactPageData) {
-          // Extract scbaldwin7@gmail.com which is directly visible in the HTML content
-          const emailMatch = contactPageData.content.match(
-            /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g
-          );
-          if (emailMatch && emailMatch.length > 0) {
-            const email = emailMatch[0];
-            // Extract name
-            const nameMatch = contactPageData.content.match(/Steve Baldwin/);
-            const name = nameMatch ? nameMatch[0] : undefined;
+      // Process contact pages for any site that might have encoded emails
+      const contactPages = apiResponses.filter(
+        (r) =>
+          r.url.toLowerCase().includes("/contact") ||
+          r.url.toLowerCase().includes("/about") ||
+          r.url.toLowerCase().includes("/staff") ||
+          r.url.toLowerCase().includes("/coaches")
+      );
 
+      for (const contactPage of contactPages) {
+        // Extract emails from contact pages
+        const emailMatches = contactPage.content.match(
+          /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g
+        );
+
+        if (emailMatches && emailMatches.length > 0) {
+          // Process all found emails
+          for (const email of emailMatches) {
+            // Look for name context around the email
+            const nameContext = this.findNameNearEmail([contactPage], email);
+
+            // Only add if it passes email validation
             if (this.isValidEmail(email)) {
               allContacts.push({
                 email,
-                name,
+                name: nameContext || undefined,
                 source: url,
               });
             }

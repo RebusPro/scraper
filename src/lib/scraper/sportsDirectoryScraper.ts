@@ -1,10 +1,9 @@
 /**
  * Sports Directory Scraper - Specialized for coach/staff directories with dynamic content
- * Specifically designed for sites like hockey.travelsports.com
+ * Specifically designed for sports sites with various directory structures
  * Only extracts real emails, no guessing
  */
-
-import { Page, ElementHandle } from "playwright";
+import { Page } from "playwright";
 import { ScrapedContact } from "./types";
 import { extractEmailsFromText } from "./emailExtractor";
 import { getNameFromText, getTitleFromText } from "./utils";
@@ -18,41 +17,65 @@ export async function processSportsDirectory(
 ): Promise<ScrapedContact[]> {
   console.log(`Processing sports directory for ${url}`);
 
-  // Detect which type of sports directory we're dealing with
-  if (url.includes("travelsports.com")) {
-    return await processTravelSportsDirectory(page, url);
+  try {
+    // Detect what type of sports directory site we're dealing with
+    // Load full content
+    await page.content();
+
+    // Check if this is a coach/team directory by looking for common patterns
+    const isCoachDirectory = await page.evaluate(() => {
+      // Look for specific text in the page that indicates a coach directory
+      const pageText = document.body.textContent || "";
+      const hasCoachText =
+        pageText.includes("Coaches") ||
+        pageText.includes("Coach Directory") ||
+        pageText.includes("Team Directory") ||
+        pageText.includes("Staff Directory");
+
+      // Count elements that have coach, staff, or team in their class names
+      const coachElements = document.querySelectorAll(
+        '[class*="coach"],[class*="staff"],[class*="team"]'
+      );
+
+      return hasCoachText || coachElements.length > 5;
+    });
+
+    if (isCoachDirectory) {
+      return await processCoachDirectory(page, url);
+    }
+
+    // Default handling for generic sports directories
+    return await processGenericSportsDirectory(page, url);
+  } catch (error) {
+    console.error(`Error detecting sports directory type: ${error}`);
+    return await processGenericSportsDirectory(page, url);
   }
-
-  // Add more specialized handlers here for other sites
-
-  // Default handling for generic sports directories
-  return await processGenericSportsDirectory(page, url);
 }
 
 /**
- * Process Travel Sports Hockey directory specifically
+ * Process coach/team directory sites
  */
-async function processTravelSportsDirectory(
+async function processCoachDirectory(
   page: Page,
   url: string
 ): Promise<ScrapedContact[]> {
-  console.log("Processing Travel Sports hockey directory");
+  console.log("Processing coach/staff directory");
   const contacts: ScrapedContact[] = [];
 
   try {
-    // Wait for coach cards to load
-    await page.waitForSelector("*:has-text('Hockey Coaches')", {
-      timeout: 15000,
-    });
+    // Wait for coach cards/content to load (with reduced timeout)
+    await page
+      .waitForLoadState("networkidle", { timeout: 8000 })
+      .catch(() => {});
 
-    // Check for filtering options and pagination
-    await handleTravelSportsFiltering(page);
+    // Check if there are filtering options and try to handle them
+    await handleCommonFiltering(page);
 
-    // Scroll down multiple times to trigger lazy loading
-    console.log("Scrolling to load all content");
-    for (let i = 0; i < 10; i++) {
-      await page.evaluate(() => window.scrollBy(0, 500));
-      await page.waitForTimeout(500);
+    // Scroll down fewer times to trigger lazy loading
+    console.log("Scrolling to load content (optimized)");
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate(() => window.scrollBy(0, 800));
+      await page.waitForTimeout(300);
     }
 
     // Extract all content and look for emails
@@ -93,25 +116,26 @@ async function processTravelSportsDirectory(
         }
       }
     } else {
-      // If no emails found directly, try to visit individual coach profiles
-      console.log(
-        "No emails found directly, looking at individual coach profiles"
+      // If no emails found directly, try to visit individual profiles
+      console.log("No emails found directly, looking at individual profiles");
+
+      // Get profile links that might be coach/staff profiles
+      const profileLinks = await page.$$(
+        "a[href*='/coaches/'], a[href*='/staff/'], a[href*='/team/'], a[href*='/about/']"
       );
+      console.log(`Found ${profileLinks.length} potential profile links`);
 
-      // Get coach profile links
-      const coachLinks = await page.$$("a[href*='/coaches/']");
-      console.log(`Found ${coachLinks.length} coach profile links`);
+      // Only process first 5 profiles to avoid overloading
+      const profilesToProcess = profileLinks.slice(0, 5);
 
-      // Only process first 5 coach profiles to avoid overloading
-      const coachesToProcess = coachLinks.slice(0, 5);
-
-      for (const coachLink of coachesToProcess) {
+      for (const profileLink of profilesToProcess) {
         try {
-          // Get coach name and URL
-          const coachName = (await coachLink.textContent()) || "Coach";
-          const href = (await coachLink.getAttribute("href")) || "";
+          // Get name and URL
+          const profileName =
+            (await profileLink.textContent()) || "Staff Member";
+          const href = (await profileLink.getAttribute("href")) || "";
 
-          if (!href || href === "/coaches" || href.includes("/register")) {
+          if (!href || href === "#" || href.includes("/register")) {
             continue;
           }
 
@@ -122,8 +146,8 @@ async function processTravelSportsDirectory(
             profileUrl = `${baseUrl.origin}${href}`;
           }
 
-          // Visit coach profile
-          console.log(`Visiting coach profile: ${profileUrl}`);
+          // Visit profile
+          console.log(`Visiting profile: ${profileUrl}`);
           await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
           await page.waitForTimeout(2000);
 
@@ -135,11 +159,11 @@ async function processTravelSportsDirectory(
             // Found direct email(s)
             for (const email of profileEmails) {
               // Try to extract title from profile
-              const title = getTitleFromText(profileContent) || "Coach";
+              const title = getTitleFromText(profileContent) || "";
 
               contacts.push({
                 email,
-                name: coachName,
+                name: profileName,
                 title,
                 source: profileUrl,
                 confidence: "Confirmed",
@@ -151,54 +175,75 @@ async function processTravelSportsDirectory(
           await page.goto(url, { waitUntil: "domcontentloaded" });
           await page.waitForTimeout(1000);
         } catch (error) {
-          console.error(`Error visiting coach profile: ${error}`);
+          console.error(`Error visiting profile: ${error}`);
         }
       }
     }
 
     return contacts;
   } catch (error) {
-    console.error(`Error processing Travel Sports directory: ${error}`);
+    console.error(`Error processing coach directory: ${error}`);
     return contacts;
   }
 }
 
 /**
- * Handle filtering options for Travel Sports
+ * Handle common filtering options seen on sports directories
  */
-async function handleTravelSportsFiltering(page: Page): Promise<void> {
+async function handleCommonFiltering(page: Page): Promise<void> {
   try {
     // Check if there are filter dropdowns
-    const filterDropdowns = await page.$$("select, .filter-dropdown");
+    const filterDropdowns = await page.$$(
+      "select, .filter-dropdown, [class*='filter'], [class*='dropdown']"
+    );
 
     if (filterDropdowns.length > 0) {
-      console.log(`Found ${filterDropdowns.length} filter dropdowns`);
+      console.log(`Found ${filterDropdowns.length} filter elements`);
 
       // Try to select the broadest options to get most coaches
       // For example, select "All Ages" or "All Levels" if available
       for (const dropdown of filterDropdowns) {
-        await dropdown.click();
+        await dropdown.click().catch(() => {}); // Ignore errors if not clickable
         await page.waitForTimeout(500);
 
         // Try to select the first option which is often "All" or the broadest
         const options = await dropdown.$$("option");
         if (options.length > 0) {
-          await options[0].click();
+          await options[0].click().catch(() => {});
         }
 
         await page.waitForTimeout(500);
       }
     }
 
-    // Check for "Reset All" button and click it to show all coaches
-    const resetButton = await page.$("button:has-text('Reset All')");
-    if (resetButton) {
-      console.log("Clicking Reset All button");
-      await resetButton.click();
-      await page.waitForTimeout(1000);
+    // Common reset button patterns
+    const resetSelectors = [
+      "button:text('Reset')",
+      "button:text('Reset All')",
+      "button:text('Clear')",
+      "button:text('Clear All')",
+      "a:text('Reset')",
+      "a:text('Clear')",
+      "[class*='reset']",
+      "[class*='clear']",
+    ];
+
+    // Try each selector
+    for (const selector of resetSelectors) {
+      try {
+        const resetButton = await page.$(selector);
+        if (resetButton) {
+          console.log(`Clicking reset button: ${selector}`);
+          await resetButton.click().catch(() => {});
+          await page.waitForTimeout(1000);
+          break; // Stop after finding and clicking one
+        }
+      } catch {
+        // Continue trying other selectors
+      }
     }
   } catch (error) {
-    console.error(`Error handling Travel Sports filtering: ${error}`);
+    console.error(`Error handling directory filtering: ${error}`);
   }
 }
 
@@ -213,7 +258,9 @@ async function processGenericSportsDirectory(
 
   try {
     // Wait for content to load
-    await page.waitForLoadState("networkidle", { timeout: 20000 });
+    await page
+      .waitForLoadState("networkidle", { timeout: 20000 })
+      .catch(() => {});
 
     // Try to scroll down to trigger lazy loading
     console.log("Scrolling to load all content");
@@ -231,13 +278,15 @@ async function processGenericSportsDirectory(
 
       // Process each email with context
       for (const email of emails) {
-        // Get context around the email
-        const contextSelector = `//text()[contains(., '${email}')]/ancestor::*[position() <= 3]`;
+        // Try to get context around email
         try {
-          const contexts = await page
-            .locator(contextSelector)
-            .allTextContents();
-          const context = contexts.join(" ");
+          const emailIndex = content.indexOf(email);
+          const startIndex = Math.max(0, emailIndex - 200);
+          const endIndex = Math.min(
+            content.length,
+            emailIndex + email.length + 200
+          );
+          const context = content.substring(startIndex, endIndex);
 
           // Extract name and title from context
           const name = getNameFromText(context) || "";
@@ -259,111 +308,27 @@ async function processGenericSportsDirectory(
           });
         }
       }
-
-      return contacts;
     }
 
-    // If no emails found in page content, look for staff elements
-    console.log("No emails found directly, looking for staff elements");
-
-    // Look for coach/staff cards or list items
-    const selectors = [
-      // Common selectors for coach/staff cards
-      ".coach, .staff, .team-member, .directory-item, .person",
-      "div[class*='coach'], div[class*='staff'], div[class*='team']",
-      "li[class*='coach'], li[class*='staff'], li[class*='team']",
-      // Legacy table-based listings
-      "table tr:has(td:has-text('Coach')), table tr:has(td:has-text('Staff'))",
-      // Generic cards that might contain staff info
-      ".card, .profile, .bio",
-    ];
-
-    let staffElements: ElementHandle<SVGElement | HTMLElement>[] = [];
-
-    // Try each selector
-    for (const selector of selectors) {
-      try {
-        const elements = await page.$$(selector);
-        if (elements.length > 0) {
-          console.log(
-            `Found ${elements.length} staff elements with selector ${selector}`
-          );
-          staffElements = elements;
-          break;
-        }
-      } catch {
-        // Skip problematic selectors
-      }
-    }
-
-    // If no elements found with specific selectors, try a more general approach
-    if (staffElements.length === 0) {
-      console.log(
-        "No staff elements found with specific selectors, trying general approach"
-      );
-
-      // Look for elements containing typical titles
-      staffElements = await page.$$(
-        "*:has-text('Coach'), *:has-text('Director'), *:has-text('Instructor')"
-      );
-    }
-
-    console.log(`Processing ${staffElements.length} staff elements`);
-
-    // Process each staff element
-    for (const element of staffElements) {
-      try {
-        const text = (await element.textContent()) || "";
-
-        // Check for direct emails in the element
-        const elementEmails = extractEmailsFromText(text);
-
-        if (elementEmails.length > 0) {
-          // Add direct emails
-          for (const email of elementEmails) {
-            // Extract name and title from element text
-            const name = getNameFromText(text) || "";
-            const title = getTitleFromText(text) || "";
-
-            contacts.push({
-              email,
-              name,
-              title,
-              source: url,
-              confidence: "Confirmed",
-            });
-          }
-        }
-      } catch (error) {
-        console.error(`Error processing staff element: ${error}`);
-      }
-    }
-
-    // If still no emails found, check contact page if available
+    // If no emails found, look for contact page links
     if (contacts.length === 0) {
-      console.log(
-        "No emails found in staff elements, looking for contact page"
-      );
+      console.log("No emails found, checking for contact pages...");
 
-      // Look for contact page link
+      // Look for contact/about page links
       const contactLinks = await page.$$(
-        "a:has-text('Contact'), a[href*='contact']"
+        "a:has-text('Contact'), a[href*='contact'], a:has-text('About'), a[href*='about']"
       );
 
       if (contactLinks.length > 0) {
+        // Visit the first contact link
         try {
-          // Get the first contact link
-          const href = await contactLinks[0].getAttribute("href");
-
-          if (href) {
-            // Build full contact page URL
-            let contactUrl = href;
-            if (href.startsWith("/")) {
+          const contactHref = await contactLinks[0].getAttribute("href");
+          if (contactHref) {
+            // Build full URL if needed
+            let contactUrl = contactHref;
+            if (contactHref.startsWith("/")) {
               const baseUrl = new URL(url);
-              contactUrl = `${baseUrl.origin}${href}`;
-            } else if (!href.includes("://")) {
-              const baseUrl = new URL(url);
-              contactUrl = `${baseUrl.origin}/${href}`;
+              contactUrl = `${baseUrl.origin}${contactHref}`;
             }
 
             // Visit contact page
@@ -371,40 +336,16 @@ async function processGenericSportsDirectory(
             await page.goto(contactUrl, { waitUntil: "domcontentloaded" });
             await page.waitForTimeout(2000);
 
-            // Extract page content and look for emails
+            // Extract emails from contact page
             const contactContent = await page.content();
             const contactEmails = extractEmailsFromText(contactContent);
 
-            if (contactEmails.length > 0) {
-              // Process each email with context
-              for (const email of contactEmails) {
-                // Try to extract name and title
-                const contextSelector = `//text()[contains(., '${email}')]/ancestor::*[position() <= 3]`;
-                try {
-                  const contexts = await page
-                    .locator(contextSelector)
-                    .allTextContents();
-                  const context = contexts.join(" ");
-
-                  const name = getNameFromText(context) || "";
-                  const title = getTitleFromText(context) || "";
-
-                  contacts.push({
-                    email,
-                    name,
-                    title,
-                    source: contactUrl,
-                    confidence: "Confirmed",
-                  });
-                } catch {
-                  // If we can't get context, just add the email
-                  contacts.push({
-                    email,
-                    source: contactUrl,
-                    confidence: "Confirmed",
-                  });
-                }
-              }
+            for (const email of contactEmails) {
+              contacts.push({
+                email,
+                source: contactUrl,
+                confidence: "Confirmed",
+              });
             }
           }
         } catch (error) {
