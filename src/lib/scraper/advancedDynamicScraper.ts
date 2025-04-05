@@ -1,13 +1,11 @@
 /**
  * Enhanced Dynamic Scraper - Specialized for coach websites with dynamic content
+ * Focuses on extracting real emails only, no guessing
  */
 
 import { Page } from "playwright";
 import { ScrapedContact } from "./types";
-import {
-  extractEmailsFromText,
-  generatePossibleEmails,
-} from "./emailExtractor";
+import { extractEmailsFromText } from "./emailExtractor";
 import { getNameFromText, getTitleFromText } from "./utils";
 import { processCoachDirectory } from "./dynamicScraper";
 
@@ -67,7 +65,7 @@ export async function enhancedProcessCoachDirectory(
 
     // Strategy 3: Apply specialized coach directory processing
     console.log(`Applying specialized coach directory processing for ${url}`);
-    const specializedContacts = await processCoachElements(page);
+    const specializedContacts = await processCoachElements(page, url);
     allContacts.push(...specializedContacts);
 
     // Strategy 4: Fall back to the legacy processor as a last resort
@@ -118,104 +116,15 @@ async function extractCoachesGeneralStrategy(
         email,
         name,
         title,
-        url,
+        source: url,
         confidence: "Confirmed",
-        source: "General extraction",
       });
-    }
-
-    // If no emails found directly, try to extract names and generate potential emails
-    if (contacts.length === 0) {
-      await generateContactsFromNames(page, url, contacts);
     }
 
     return contacts;
   } catch (err) {
     console.error(`Error in general extraction: ${err}`);
     return contacts;
-  }
-}
-
-/**
- * Generate contacts from staff/team member names
- */
-async function generateContactsFromNames(
-  page: Page,
-  url: string,
-  contacts: ScrapedContact[]
-): Promise<void> {
-  try {
-    // Look for potential team member/staff elements
-    const nameSelectors = [
-      // Common selectors for coach/staff sections
-      ".coach, .staff, .team-member, .directory-item, .person, .contact-info, .faculty, .employee",
-      // Card-like elements often used for staff
-      ".card, .profile-card, .member-card, .bio-card",
-      // List items in team/staff sections
-      "ul.staff li, ul.team li, ul.coaches li, ul.faculty li",
-      // Elements with common staff-related terms
-      "[class*='coach'], [class*='staff'], [class*='team'], [class*='faculty'], [class*='directory']",
-    ];
-
-    // Try each selector to find potential team members
-    const teamMembers: string[] = [];
-    for (const selector of nameSelectors) {
-      try {
-        const elements = await page.$$(selector);
-        console.log(`Found ${elements.length} potential team members`);
-
-        for (const element of elements) {
-          const text = (await element.textContent()) || "";
-          teamMembers.push(text);
-        }
-
-        if (teamMembers.length > 0) break;
-      } catch {
-        // Ignore errors for individual selectors
-      }
-    }
-
-    // Process member names
-    const domain = extractDomain(url);
-    let generatedCount = 0;
-
-    for (const text of teamMembers) {
-      const name = getNameFromText(text);
-      const title = getTitleFromText(text);
-
-      if (name && domain) {
-        const possibleEmails = generatePossibleEmails(name, domain);
-
-        for (const email of possibleEmails) {
-          contacts.push({
-            email,
-            name,
-            title: title || "",
-            url,
-            confidence: "Generated",
-            source: "Name-based generation",
-          });
-          generatedCount++;
-
-          // Limit the number of generated emails to avoid overwhelming results
-          if (generatedCount >= 5) break;
-        }
-      }
-    }
-  } catch (err) {
-    console.error(`Error generating contacts from names: ${err}`);
-  }
-}
-
-/**
- * Extract domain from URL
- */
-function extractDomain(url: string): string {
-  try {
-    const hostname = new URL(url).hostname;
-    return hostname.startsWith("www.") ? hostname.substring(4) : hostname;
-  } catch {
-    return "";
   }
 }
 
@@ -321,7 +230,10 @@ async function navigateToContactPages(
 /**
  * Process coach elements to extract contact information
  */
-async function processCoachElements(page: Page): Promise<ScrapedContact[]> {
+async function processCoachElements(
+  page: Page,
+  url: string
+): Promise<ScrapedContact[]> {
   const contacts: ScrapedContact[] = [];
 
   try {
@@ -362,39 +274,16 @@ async function processCoachElements(page: Page): Promise<ScrapedContact[]> {
         // If direct emails found, use them
         if (emails.length > 0) {
           for (const email of emails) {
-            const name = getNameFromText(text);
-            const title = getTitleFromText(text);
+            const name = getNameFromText(text) || "";
+            const title = getTitleFromText(text) || "";
 
             contacts.push({
               email,
-              name: name || "",
-              title: title || "",
-              url: page.url(),
+              name,
+              title,
+              source: url,
               confidence: "Confirmed",
-              source: "Coach element",
             });
-          }
-        }
-        // Otherwise look for names and try to generate emails
-        else {
-          const name = getNameFromText(text);
-          const title = getTitleFromText(text);
-
-          if (name) {
-            const domain = extractDomain(page.url());
-            if (domain) {
-              const possibleEmails = generatePossibleEmails(name, domain);
-              for (const email of possibleEmails) {
-                contacts.push({
-                  email,
-                  name,
-                  title: title || "",
-                  url: page.url(),
-                  confidence: "Generated - Verification Required",
-                  source: "Coach element (generated)",
-                });
-              }
-            }
           }
         }
       } catch {
@@ -504,65 +393,60 @@ function isResourceUrl(url: string): boolean {
  * Prioritize contact pages by relevance
  */
 function prioritizeContactPages(urls: string[]): string[] {
-  // Score each URL by relevance
+  // Score each URL based on relevance
   const scoredUrls = urls.map((url) => {
     let score = 0;
     const lowerUrl = url.toLowerCase();
 
-    // Prioritize by URL path segments indicating contact pages
-    if (lowerUrl.includes("/contact")) score += 10;
-    if (lowerUrl.includes("/staff")) score += 8;
-    if (lowerUrl.includes("/team")) score += 7;
-    if (lowerUrl.includes("/coaches")) score += 9;
-    if (lowerUrl.includes("/faculty")) score += 6;
-    if (lowerUrl.includes("/directory")) score += 8;
-    if (lowerUrl.includes("/about-us")) score += 5;
-    if (lowerUrl.includes("/about")) score += 4;
-    if (lowerUrl.includes("/people")) score += 7;
+    // Higher scores for more specific contact pages
+    if (lowerUrl.includes("contact")) score += 10;
+    if (lowerUrl.includes("staff")) score += 8;
+    if (lowerUrl.includes("coaches")) score += 9;
+    if (lowerUrl.includes("team")) score += 7;
+    if (lowerUrl.includes("directory")) score += 6;
+    if (lowerUrl.includes("about")) score += 5;
+    if (lowerUrl.includes("faculty")) score += 7;
 
-    // Penalize URLs that are likely not contact pages
-    if (lowerUrl.includes("/news")) score -= 3;
-    if (lowerUrl.includes("/blog")) score -= 3;
-    if (lowerUrl.includes("/products")) score -= 5;
-    if (lowerUrl.includes("/shop")) score -= 5;
-    if (lowerUrl.includes("/cart")) score -= 8;
-    if (lowerUrl.includes("/login")) score -= 8;
-    if (lowerUrl.includes("/register")) score -= 6;
-    if (lowerUrl.includes("/terms")) score -= 7;
-    if (lowerUrl.includes("/privacy")) score -= 7;
+    // Penalize very generic URLs
+    if (lowerUrl.endsWith("/about")) score -= 2;
+    if (lowerUrl.endsWith("/team")) score -= 1;
+
+    // Prefer URLs with fewer path segments (usually more general pages)
+    const pathSegments = new URL(url).pathname
+      .split("/")
+      .filter(Boolean).length;
+    score -= pathSegments;
 
     return { url, score };
   });
 
-  // Sort by score (highest first)
-  scoredUrls.sort((a, b) => b.score - a.score);
-
-  // Return just the URLs in priority order
-  return scoredUrls.map((item) => item.url);
+  // Sort by score (highest first) and return the URLs
+  return scoredUrls.sort((a, b) => b.score - a.score).map((item) => item.url);
 }
 
 /**
- * Remove duplicate contacts from results
+ * Remove duplicate contacts from the results
  */
 function removeDuplicateContacts(contacts: ScrapedContact[]): ScrapedContact[] {
   const uniqueEmails = new Map<string, ScrapedContact>();
 
-  // Process contacts in order, preferring confirmed over generated
-  for (const contact of contacts) {
-    const key = contact.email.toLowerCase();
+  contacts.forEach((contact) => {
+    if (!contact.email) return;
 
-    // Always keep confirmed contacts
-    if (contact.confidence === "Confirmed") {
-      uniqueEmails.set(key, contact);
+    const email = contact.email.toLowerCase();
+    if (!uniqueEmails.has(email)) {
+      uniqueEmails.set(email, contact);
+    } else {
+      // If we already have this email, merge in any additional information
+      const existing = uniqueEmails.get(email)!;
+      if (!existing.name && contact.name) {
+        existing.name = contact.name;
+      }
+      if (!existing.title && contact.title) {
+        existing.title = contact.title;
+      }
     }
-    // Keep generated contacts only if we don't already have a confirmed one
-    else if (
-      !uniqueEmails.has(key) ||
-      uniqueEmails.get(key)?.confidence !== "Confirmed"
-    ) {
-      uniqueEmails.set(key, contact);
-    }
-  }
+  });
 
   return Array.from(uniqueEmails.values());
 }

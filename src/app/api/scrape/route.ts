@@ -81,6 +81,19 @@ export async function POST(request: NextRequest) {
       urlsToScrape = [body.url];
     }
 
+    // Filter out empty URLs and trim whitespace
+    urlsToScrape = urlsToScrape
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0);
+
+    // Add protocol if missing
+    urlsToScrape = urlsToScrape.map((url) => {
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        return `https://${url}`;
+      }
+      return url;
+    });
+
     // Extract settings if provided
     const settings = body.settings || {};
 
@@ -184,57 +197,20 @@ async function processScraping(
     try {
       console.log(`Processing URL: ${url}`);
 
-      // Apply user-provided settings with fallbacks for each value
-      let maxDepth = 2;
-      let followLinks = true;
-      let timeout = 30000;
-      let browserType: "chromium" | "firefox" = "chromium";
-      let includePhoneNumbers = true;
-      let useHeadless = true;
+      // Configure mode-based settings
+      const modeSettings = applyModeSettings(url, settings);
 
-      // Apply settings based on mode if specified
-      if (settings.mode === "aggressive") {
-        console.log("Using aggressive mode settings");
-        maxDepth = 3;
-        timeout = 60000; // Increased timeout for dynamic sites
-
-        // Aggressive mode might need to use headed browser for some sites
-        if (url.includes("travelsports.com") || url.includes("dynamic")) {
-          console.log("Using headed browser for dynamic content site");
-          useHeadless = false;
-        }
-      } else if (settings.mode === "gentle") {
-        console.log("Using gentle mode settings");
-        maxDepth = 1;
-        followLinks = false;
-        timeout = 20000;
-      } else {
-        console.log("Using standard mode settings");
-      }
-
-      // Override with specific settings if provided
-      if (settings.maxDepth !== undefined) maxDepth = settings.maxDepth;
-      if (settings.followLinks !== undefined)
-        followLinks = settings.followLinks;
-      if (settings.timeout !== undefined) timeout = settings.timeout;
-      if (settings.browserType) browserType = settings.browserType;
-      if (settings.includePhoneNumbers !== undefined)
-        includePhoneNumbers = settings.includePhoneNumbers;
-
+      // Enhanced logging for debugging
       console.log(
-        `Using settings: mode=${
-          settings.mode || "standard"
-        }, maxDepth=${maxDepth}, followLinks=${followLinks}, timeout=${timeout}ms, browser=${browserType}, headless=${useHeadless}`
+        `Using settings: mode=${modeSettings.mode}, maxDepth=${modeSettings.maxDepth}, followLinks=${modeSettings.followLinks}, timeout=${modeSettings.timeout}ms, browser=${modeSettings.browserType}, headless=${modeSettings.useHeadless}`
       );
 
-      const contacts: ScrapedContact[] = await scraper.scrapeWebsite(url, {
-        maxDepth,
-        followLinks,
-        includePhoneNumbers,
-        useHeadless,
-        timeout,
-        browserType,
-      });
+      // Determine scraping strategy based on URL and mode
+      let contacts: ScrapedContact[] = [];
+      const pagesScraped = 1;
+
+      // Use the scraper's scrapeWebsite method which handles everything
+      contacts = await scraper.scrapeWebsite(url, modeSettings);
 
       // Add to results
       const result: ScrapingResult = {
@@ -245,7 +221,7 @@ async function processScraping(
         stats: {
           totalEmails: contacts.length,
           totalWithNames: contacts.filter((c) => !!c.name).length,
-          pagesScraped: 1, // This would be better if tracked during scraping
+          pagesScraped,
         },
       };
 
@@ -324,4 +300,77 @@ async function processScraping(
   );
 
   await writer.close();
+}
+
+// Configure scraper settings based on mode and URL
+function applyModeSettings(url: string, settings: ScraperSettingsInput) {
+  // Default settings
+  let maxDepth = 2;
+  let followLinks = true;
+  let timeout = 30000;
+  let browserType: "chromium" | "firefox" = "chromium";
+  let includePhoneNumbers = true;
+  let useHeadless = true;
+  const mode = settings.mode || "standard";
+
+  // Apply settings based on mode
+  if (mode === "aggressive") {
+    maxDepth = 3;
+    followLinks = true;
+    timeout = 60000; // Increased timeout for dynamic sites
+    browserType = "chromium";
+    includePhoneNumbers = true;
+
+    // Check for sites that might need headed browser
+    const dynamicSitePatterns = [
+      "travelsports.com",
+      "hockey",
+      "dynamic",
+      "sports",
+      "coaches",
+      "directory",
+    ];
+
+    const needsHeadlessFalse = dynamicSitePatterns.some((pattern) =>
+      url.toLowerCase().includes(pattern)
+    );
+
+    if (needsHeadlessFalse) {
+      console.log("Using headed browser for potentially dynamic content site");
+      useHeadless = false;
+    }
+  } else if (mode === "gentle") {
+    maxDepth = 1;
+    followLinks = false;
+    timeout = 20000;
+    browserType = "firefox"; // Firefox can be better for simple sites
+    includePhoneNumbers = true;
+    useHeadless = true;
+  } else {
+    // Standard mode
+    maxDepth = 2;
+    followLinks = true;
+    timeout = 30000;
+    browserType = "chromium";
+    includePhoneNumbers = true;
+    useHeadless = true;
+  }
+
+  // Override with specific settings if provided
+  if (settings.maxDepth !== undefined) maxDepth = settings.maxDepth;
+  if (settings.followLinks !== undefined) followLinks = settings.followLinks;
+  if (settings.timeout !== undefined) timeout = settings.timeout;
+  if (settings.browserType) browserType = settings.browserType;
+  if (settings.includePhoneNumbers !== undefined)
+    includePhoneNumbers = settings.includePhoneNumbers;
+
+  return {
+    mode,
+    maxDepth,
+    followLinks,
+    includePhoneNumbers,
+    useHeadless,
+    timeout,
+    browserType,
+  };
 }

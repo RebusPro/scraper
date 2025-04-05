@@ -1,14 +1,12 @@
 /**
  * Sports Directory Scraper - Specialized for coach/staff directories with dynamic content
  * Specifically designed for sites like hockey.travelsports.com
+ * Only extracts real emails, no guessing
  */
 
 import { Page, ElementHandle } from "playwright";
 import { ScrapedContact } from "./types";
-import {
-  extractEmailsFromText,
-  generatePossibleEmails,
-} from "./emailExtractor";
+import { extractEmailsFromText } from "./emailExtractor";
 import { getNameFromText, getTitleFromText } from "./utils";
 
 /**
@@ -57,90 +55,110 @@ async function processTravelSportsDirectory(
       await page.waitForTimeout(500);
     }
 
-    // Process all coach cards
-    const coachCards = await page.$$(
-      "*:has-text('Ages:'), *:has-text('Divisions:')"
-    );
-    console.log(`Found ${coachCards.length} coach cards`);
+    // Extract all content and look for emails
+    const content = await page.content();
+    const emails = extractEmailsFromText(content);
 
-    for (const card of coachCards) {
-      try {
-        // Extract coach information
-        const text = (await card.textContent()) || "";
+    if (emails.length > 0) {
+      console.log(`Found ${emails.length} emails directly on the page`);
 
-        // Extract coach name from links or strong tags
-        let name = "";
-        const nameElement = await card.$("a, strong");
-        if (nameElement) {
-          name = ((await nameElement.textContent()) || "").trim();
-        } else {
-          name = getNameFromText(text) || "";
-        }
+      // Process each email with context
+      for (const email of emails) {
+        // Get context around the email
+        const contextSelector = `//text()[contains(., '${email}')]/ancestor::*[position() <= 3]`;
+        try {
+          const contexts = await page
+            .locator(contextSelector)
+            .allTextContents();
+          const context = contexts.join(" ");
 
-        if (!name) continue;
+          // Extract name and title from context
+          const name = getNameFromText(context) || "";
+          const title = getTitleFromText(context) || "";
 
-        // Extract specialty/position
-        let title = "";
-        if (text.includes("Specialties:")) {
-          const specialtiesMatch = text.match(
-            /Specialties:\s*([^]*?)(?:$|Ages:|Divisions:)/
-          );
-          if (specialtiesMatch && specialtiesMatch[1]) {
-            title = specialtiesMatch[1].trim();
-          }
-        }
-
-        // Extract coach profile URL if available
-        let profileUrl = url;
-        const linkElement = await card.$("a");
-        if (linkElement) {
-          const href = await linkElement.getAttribute("href");
-          if (href) {
-            // Ensure we have a valid URL by providing a default
-            profileUrl = new URL(href, new URL(url).origin).toString();
-          }
-        }
-
-        // Generate potential email based on name and domain
-        const domain = extractDomain(url);
-        if (domain && name) {
-          const possibleEmails = generatePossibleEmails(name, domain);
-
-          // Add the generated emails to contacts
-          for (const email of possibleEmails) {
-            contacts.push({
-              email,
-              name,
-              title,
-              source: url,
-              url: profileUrl,
-              confidence: "Generated - Verification Required",
-            });
-          }
-        }
-
-        // Visit individual coach profile to look for direct email if available
-        if (profileUrl !== url) {
-          const profileContacts = await visitCoachProfile(
-            page,
-            profileUrl,
+          contacts.push({
+            email,
             name,
-            title
-          );
-          contacts.push(...profileContacts);
+            title,
+            source: url,
+            confidence: "Confirmed",
+          });
+        } catch {
+          // If we can't get context, just add the email
+          contacts.push({
+            email,
+            source: url,
+            confidence: "Confirmed",
+          });
+        }
+      }
+    } else {
+      // If no emails found directly, try to visit individual coach profiles
+      console.log(
+        "No emails found directly, looking at individual coach profiles"
+      );
+
+      // Get coach profile links
+      const coachLinks = await page.$$("a[href*='/coaches/']");
+      console.log(`Found ${coachLinks.length} coach profile links`);
+
+      // Only process first 5 coach profiles to avoid overloading
+      const coachesToProcess = coachLinks.slice(0, 5);
+
+      for (const coachLink of coachesToProcess) {
+        try {
+          // Get coach name and URL
+          const coachName = (await coachLink.textContent()) || "Coach";
+          const href = (await coachLink.getAttribute("href")) || "";
+
+          if (!href || href === "/coaches" || href.includes("/register")) {
+            continue;
+          }
+
+          // Build full profile URL
+          let profileUrl = href;
+          if (href.startsWith("/")) {
+            const baseUrl = new URL(url);
+            profileUrl = `${baseUrl.origin}${href}`;
+          }
+
+          // Visit coach profile
+          console.log(`Visiting coach profile: ${profileUrl}`);
+          await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
+          await page.waitForTimeout(2000);
+
+          // Extract page content and look for emails
+          const profileContent = await page.content();
+          const profileEmails = extractEmailsFromText(profileContent);
+
+          if (profileEmails.length > 0) {
+            // Found direct email(s)
+            for (const email of profileEmails) {
+              // Try to extract title from profile
+              const title = getTitleFromText(profileContent) || "Coach";
+
+              contacts.push({
+                email,
+                name: coachName,
+                title,
+                source: profileUrl,
+                confidence: "Confirmed",
+              });
+            }
+          }
 
           // Navigate back to the main directory
           await page.goto(url, { waitUntil: "domcontentloaded" });
           await page.waitForTimeout(1000);
+        } catch (error) {
+          console.error(`Error visiting coach profile: ${error}`);
         }
-      } catch (err) {
-        console.error(`Error processing coach card: ${err}`);
       }
     }
 
     return contacts;
-  } catch (err) {
-    console.error(`Error processing Travel Sports directory: ${err}`);
+  } catch (error) {
+    console.error(`Error processing Travel Sports directory: ${error}`);
     return contacts;
   }
 }
@@ -179,53 +197,8 @@ async function handleTravelSportsFiltering(page: Page): Promise<void> {
       await resetButton.click();
       await page.waitForTimeout(1000);
     }
-  } catch (err) {
-    console.error(`Error handling Travel Sports filtering: ${err}`);
-  }
-}
-
-/**
- * Visit individual coach profile to extract direct contact info
- */
-async function visitCoachProfile(
-  page: Page,
-  profileUrl: string,
-  coachName: string,
-  coachTitle: string
-): Promise<ScrapedContact[]> {
-  const contacts: ScrapedContact[] = [];
-
-  try {
-    console.log(`Visiting coach profile: ${profileUrl}`);
-
-    // Navigate to the profile page
-    await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(2000);
-
-    // Extract page content
-    const content = await page.content();
-
-    // Look for direct emails in the page
-    const emails = extractEmailsFromText(content);
-
-    if (emails.length > 0) {
-      // Found direct email(s)
-      for (const email of emails) {
-        contacts.push({
-          email,
-          name: coachName,
-          title: coachTitle,
-          source: profileUrl,
-          url: profileUrl,
-          confidence: "Confirmed",
-        });
-      }
-    }
-
-    return contacts;
-  } catch (err) {
-    console.error(`Error visiting coach profile ${profileUrl}: ${err}`);
-    return contacts;
+  } catch (error) {
+    console.error(`Error handling Travel Sports filtering: ${error}`);
   }
 }
 
@@ -248,6 +221,50 @@ async function processGenericSportsDirectory(
       await page.evaluate(() => window.scrollBy(0, 800));
       await page.waitForTimeout(800);
     }
+
+    // Extract all content and look for emails
+    const content = await page.content();
+    const emails = extractEmailsFromText(content);
+
+    if (emails.length > 0) {
+      console.log(`Found ${emails.length} emails directly on the page`);
+
+      // Process each email with context
+      for (const email of emails) {
+        // Get context around the email
+        const contextSelector = `//text()[contains(., '${email}')]/ancestor::*[position() <= 3]`;
+        try {
+          const contexts = await page
+            .locator(contextSelector)
+            .allTextContents();
+          const context = contexts.join(" ");
+
+          // Extract name and title from context
+          const name = getNameFromText(context) || "";
+          const title = getTitleFromText(context) || "";
+
+          contacts.push({
+            email,
+            name,
+            title,
+            source: url,
+            confidence: "Confirmed",
+          });
+        } catch {
+          // If we can't get context, just add the email
+          contacts.push({
+            email,
+            source: url,
+            confidence: "Confirmed",
+          });
+        }
+      }
+
+      return contacts;
+    }
+
+    // If no emails found in page content, look for staff elements
+    console.log("No emails found directly, looking for staff elements");
 
     // Look for coach/staff cards or list items
     const selectors = [
@@ -298,63 +315,107 @@ async function processGenericSportsDirectory(
       try {
         const text = (await element.textContent()) || "";
 
-        // Extract name and title
-        const name = getNameFromText(text) || "";
-        const title = getTitleFromText(text);
-
-        if (!name) continue;
-
         // Check for direct emails in the element
-        const emails = extractEmailsFromText(text);
+        const elementEmails = extractEmailsFromText(text);
 
-        if (emails.length > 0) {
+        if (elementEmails.length > 0) {
           // Add direct emails
-          for (const email of emails) {
+          for (const email of elementEmails) {
+            // Extract name and title from element text
+            const name = getNameFromText(text) || "";
+            const title = getTitleFromText(text) || "";
+
             contacts.push({
               email,
               name,
-              title: title || "",
+              title,
               source: url,
               confidence: "Confirmed",
             });
           }
-        } else {
-          // Generate potential emails
-          const domain = extractDomain(url);
-          if (domain) {
-            const possibleEmails = generatePossibleEmails(name, domain);
+        }
+      } catch (error) {
+        console.error(`Error processing staff element: ${error}`);
+      }
+    }
 
-            for (const email of possibleEmails) {
-              contacts.push({
-                email,
-                name,
-                title: title || "",
-                source: url,
-                confidence: "Generated - Verification Required",
-              });
+    // If still no emails found, check contact page if available
+    if (contacts.length === 0) {
+      console.log(
+        "No emails found in staff elements, looking for contact page"
+      );
+
+      // Look for contact page link
+      const contactLinks = await page.$$(
+        "a:has-text('Contact'), a[href*='contact']"
+      );
+
+      if (contactLinks.length > 0) {
+        try {
+          // Get the first contact link
+          const href = await contactLinks[0].getAttribute("href");
+
+          if (href) {
+            // Build full contact page URL
+            let contactUrl = href;
+            if (href.startsWith("/")) {
+              const baseUrl = new URL(url);
+              contactUrl = `${baseUrl.origin}${href}`;
+            } else if (!href.includes("://")) {
+              const baseUrl = new URL(url);
+              contactUrl = `${baseUrl.origin}/${href}`;
+            }
+
+            // Visit contact page
+            console.log(`Visiting contact page: ${contactUrl}`);
+            await page.goto(contactUrl, { waitUntil: "domcontentloaded" });
+            await page.waitForTimeout(2000);
+
+            // Extract page content and look for emails
+            const contactContent = await page.content();
+            const contactEmails = extractEmailsFromText(contactContent);
+
+            if (contactEmails.length > 0) {
+              // Process each email with context
+              for (const email of contactEmails) {
+                // Try to extract name and title
+                const contextSelector = `//text()[contains(., '${email}')]/ancestor::*[position() <= 3]`;
+                try {
+                  const contexts = await page
+                    .locator(contextSelector)
+                    .allTextContents();
+                  const context = contexts.join(" ");
+
+                  const name = getNameFromText(context) || "";
+                  const title = getTitleFromText(context) || "";
+
+                  contacts.push({
+                    email,
+                    name,
+                    title,
+                    source: contactUrl,
+                    confidence: "Confirmed",
+                  });
+                } catch {
+                  // If we can't get context, just add the email
+                  contacts.push({
+                    email,
+                    source: contactUrl,
+                    confidence: "Confirmed",
+                  });
+                }
+              }
             }
           }
+        } catch (error) {
+          console.error(`Error visiting contact page: ${error}`);
         }
-      } catch (err) {
-        console.error(`Error processing staff element: ${err}`);
       }
     }
 
     return contacts;
-  } catch (err) {
-    console.error(`Error processing generic sports directory: ${err}`);
+  } catch (error) {
+    console.error(`Error processing generic sports directory: ${error}`);
     return contacts;
-  }
-}
-
-/**
- * Extract domain from URL
- */
-function extractDomain(url: string): string {
-  try {
-    const hostname = new URL(url).hostname;
-    return hostname.startsWith("www.") ? hostname.substring(4) : hostname;
-  } catch {
-    return "";
   }
 }

@@ -1,93 +1,163 @@
-# Enhanced Coaching Website Email Scraper
+# Coach Email Scraper
 
-This tool is specially designed for extracting coach emails, names, and titles from skating and hockey coaching websites, including those with dynamic content that traditional scrapers can't handle.
+A powerful web application that extracts real email addresses, names, and positions of coaches from sports websites for marketing campaigns.
 
-## 🚀 Major Improvements
+## Key Features
 
-- **Dynamic Content Support**: Successfully scrapes JavaScript-heavy websites that load content dynamically (like hockey.travelsports.com)
-- **Specialized Directory Processing**: Automatically detects and applies specialized extraction techniques for coach directories
-- **Excel Integration**: Upload Excel files with lists of websites and export comprehensive results
-- **Non-Technical User Interface**: Designed for marketing managers without technical expertise
-- **Name & Title Extraction**: Not just emails - also extracts names and titles/positions when available
-- **Robust Navigation**: Intelligently explores contact and staff pages for maximum data collection
+- **Extract Real Emails Only** - No guessing or generating email addresses
+- **Dynamic Content Support** - Specialized handling for sites like hockey.travelsports.com
+- **Smart Name & Position Detection** - Extracts full context around email addresses
+- **Excel Integration** - Import website lists and export contact data
+- **User-Friendly Interface** - Designed for non-technical managers
 
-## 📋 How to Use
+## How to Use
 
-### Getting Started
+1. **Start the application**
 
-1. Run the application with `npm run dev`
-2. Open your browser to `http://localhost:3000`
+   ```
+   npm run dev
+   ```
 
-### For Best Results
+2. **Choose scanning intensity**
 
-1. **Choose the Right Scraping Mode**:
+   - Light: Fast scanning for simple sites
+   - Standard: Balanced approach for most websites
+   - Thorough: Deep scanning for complex sites with dynamic content
 
-   - **Aggressive**: Best for dynamic sites like hockey.travelsports.com
-   - **Standard**: Good balance for most coaching websites
-   - **Gentle**: For simple websites or when you want minimal server load
+3. **Upload or paste website URLs**
 
-2. **Upload Options**:
+   - Upload an Excel file containing website URLs
+   - Or paste URLs directly into the text area
 
-   - **Excel/CSV**: Upload a spreadsheet containing website URLs
-   - **Paste URLs**: Directly paste a list of URLs in the text area
+4. **View results in real-time**
 
-3. **Excel Format**:
-   - Include a column with website URLs (column header should contain "website", "url", or "link")
-   - Download the template for a ready-to-use example
-   - Additional columns will be preserved in your results
+   - Watch as emails are extracted
+   - View the count of contacts found
+   - See name and position information when available
 
-### Processing Dynamic Sites
+5. **Download results**
+   - Export all contacts to Excel or CSV format
+   - Ready to import into your marketing tools
 
-Sites with dynamic content (like hockey.travelsports.com) require special handling:
+## Scanning Modes Explained
 
-1. Use "Aggressive" mode in the settings
-2. Expect slightly longer processing times (the system needs to wait for dynamic content to load)
-3. The system will automatically detect coach directories and apply specialized extraction techniques
+### Light Mode
 
-## 🔍 How It Works
+- Quick, surface-level scanning
+- Only examines main page content
+- Best for simple websites with easily accessible contact information
+- Fastest option, but finds fewer contacts
 
-Our enhanced scraper uses a multi-layered approach:
+### Standard Mode (Default)
 
-1. **Initial Detection**: Identifies if the site is a coaching directory or sports-related website
-2. **Specialized Processing**: Applies specific extraction techniques for known site patterns
-3. **Dynamic Content Analysis**: Waits for JavaScript-loaded content and processes it
-4. **Navigation Intelligence**: Automatically finds and explores contact/staff pages
-5. **Contact Extraction**: Extracts emails, names, and titles with context awareness
-6. **Email Generation**: For coaches without explicit emails, generates likely email formats
+- Balanced speed and thoroughness
+- Examines main page and contact/about pages
+- Works well with most coaching websites
+- Recommended for most use cases
 
-## 🧩 Key Features for Skating/Hockey Websites
+### Thorough Mode
 
-- **Directory Specialization**: Optimized for coach/staff directory pages
-- **Results Verification**: Confidence ratings show which emails were directly found vs. generated
-- **Pagination Handling**: Automatically processes paginated staff listings
-- **Filter Interaction**: Smart handling of filtering options in directories
-- **Profile Visiting**: Can visit individual coach profiles for more complete information
-- **Excel Integration**: Easy importing from your existing database and exporting for marketing
+- Deep, comprehensive scanning
+- Follows more links and examines more pages
+- Handles dynamic content and complex websites
+- Best for sites like hockey.travelsports.com
+- Takes more time but finds the most contacts
 
-## 📢 Tips for Maximum Results
+## Technical Implementation
 
-- **Include Related Pages**: Don't just scrape homepages - include the /coaches, /staff, or /contact URLs when available
-- **Check Confidence Ratings**: In results, pay attention to confidence scores - "Confirmed" emails were directly found, while "Generated" require verification
-- **Combine with Marketing Tools**: Export to Excel/CSV for easy import into your marketing platform
-- **Batch Processing**: Process multiple websites at once for efficiency
-- **Template Usage**: Use the provided Excel template for consistent formatting
+### Email Extraction Strategy
 
-## 🚫 Limitations
+The application uses a multi-layered approach to find real emails:
 
-- Some websites actively block scraping with technical measures
-- Email addresses displayed as images cannot be extracted
-- Extremely complex JavaScript frameworks may limit extraction capabilities
-- Generated emails should be verified before use in marketing campaigns
+1. **Direct Email Extraction**
 
-## 📊 Understanding Results
+   - Scans page content for standard email patterns
+   - Checks mailto: links
+   - Looks for common email field patterns
 
-The results page shows:
+2. **Contact Page Navigation**
 
-- Total emails found per website
-- Detailed view with names, titles, and confidence scores
-- Export options (Excel/CSV)
-- Statistics about the successful extraction rate
+   - Automatically finds and visits contact/staff pages
+   - Examines about pages for contact information
+   - Follows links to coach profile pages when available
 
----
+3. **Dynamic Content Handling**
 
-This tool is specifically enhanced for skating coach websites and similar sports coaching directories, with special attention to the dynamic content challenges faced by non-technical marketing managers.
+   - Detects dynamically loaded content
+   - Waits for page to fully render
+   - Scrolls to trigger lazy loading
+   - Handles pagination and filtering interfaces
+
+4. **Obfuscation Detection**
+   - Identifies common email protection techniques
+   - Decodes CloudFlare protected emails
+   - Reassembles split email addresses
+
+### Name & Position Extraction
+
+The application extracts names and positions using context:
+
+1. **Context Analysis**
+
+   - Examines text surrounding each email
+   - Looks for capitalized name patterns
+   - Identifies common coaching title patterns
+
+2. **Element Structure Analysis**
+   - Analyzes HTML structure around emails
+   - Identifies name/title elements in staff cards
+   - Extracts structured data from coach profiles
+
+## Troubleshooting
+
+### No Emails Found
+
+If no emails are found on a site:
+
+1. **Try Thorough Mode**
+
+   - For dynamic sites, use the "Thorough" scanning mode
+   - This enables special handling for complex pages
+
+2. **Check URL Format**
+
+   - Ensure URLs include the protocol (https://)
+   - Make sure you're using the main domain, not a subdomain
+
+3. **Verify Site Structure**
+   - Some sites hide contact information behind forms
+   - Check if the site actually contains visible email addresses
+
+### Performance Issues
+
+If scanning takes too long:
+
+1. **Start with Light Mode**
+
+   - For simple sites, Light mode is much faster
+
+2. **Limit Batch Size**
+   - Process fewer sites at once
+   - Break large lists into smaller batches
+
+### Excel Import Issues
+
+If your Excel file isn't recognized:
+
+1. **Check Format**
+
+   - URLs should be in a single column
+   - File should be .xlsx or .csv format
+
+2. **Simplify Content**
+   - Remove unnecessary columns
+   - Make sure URLs are properly formatted
+
+## Technical Details
+
+This application combines multiple technologies to provide powerful scraping capabilities:
+
+- **Next.js** - React framework for the UI
+- **Playwright** - Browser automation for dynamic content
+- **Tailwind CSS** - Styling and UI components
+- **ExcelJS** - Excel file parsing and generation

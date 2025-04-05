@@ -9,7 +9,7 @@ import { ScrapingResult } from "@/lib/scraper/types";
 import EnhancedBatchUploader from "@/components/EnhancedBatchUploader";
 import ResultsDisplay from "@/components/ResultsDisplay";
 import ScrapeProgressDisplay from "@/components/ScrapeProgressDisplay";
-import ScrapeSettingsSelector from "@/components/ScrapeSettingsSelector";
+import SimplifiedScrapeSettingsSelector from "@/components/SimplifiedScrapeSettingsSelector";
 import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
 
 export default function Home() {
@@ -113,13 +113,11 @@ export default function Home() {
             break;
           }
         } catch {
-          // If we can't parse the JSON yet, we might need more data
-          // Just continue to the next chunk
-          // But if we've accumulated too much data without a valid JSON, something's wrong
-          if (buffer.length > 100000) {
-            console.error("Buffer overflow, resetting");
+          // If parsing fails, we might need more data
+          // But if the buffer gets too large, something's wrong
+          if (buffer.length > 50000) {
+            console.error("Buffer too large, resetting");
             buffer = "";
-            throw new Error("Failed to parse streaming response");
           }
         }
       }
@@ -221,12 +219,11 @@ export default function Home() {
         {/* Header section */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800 dark:text-white">
-            Skating Coach Email Finder
+            Coach Email Finder
           </h1>
           <p className="text-gray-600 dark:text-gray-300 mt-2 max-w-2xl mx-auto">
-            Easily extract coach emails, names, and positions from websites for
-            your marketing campaigns — even from dynamic websites that other
-            tools can&apos;t handle
+            Extract real coach emails, names, and positions from websites for
+            your marketing campaigns
           </p>
 
           {/* Feature badges */}
@@ -317,10 +314,10 @@ export default function Home() {
                   </div>
                   <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
                     <span className="font-medium text-gray-800 dark:text-white">
-                      Dynamic Content Processing:
+                      Finds Real Emails Only:
                     </span>{" "}
-                    Extracts data from modern, JavaScript-heavy websites that
-                    traditional scrapers can&apos;t handle
+                    No guessing or generating email addresses - we extract only
+                    real contact information
                   </p>
                 </div>
                 <div className="flex items-start">
@@ -385,10 +382,10 @@ export default function Home() {
                   </div>
                   <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
                     <span className="font-medium text-gray-800 dark:text-white">
-                      Specialized for Coach Directories:
+                      Dynamic Content Handling:
                     </span>{" "}
-                    Our tool is optimized for coach directories and
-                    sports-related websites
+                    Special processing for sites like hockey.travelsports.com
+                    that load content dynamically
                   </p>
                 </div>
                 <div className="flex items-start">
@@ -410,7 +407,7 @@ export default function Home() {
                       Intelligent Navigation:
                     </span>{" "}
                     Automatically explores staff and contact pages to find
-                    maximum information
+                    contact information
                   </p>
                 </div>
                 <div className="flex items-start">
@@ -440,9 +437,8 @@ export default function Home() {
             <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900/30 rounded-md">
               <p className="text-sm text-yellow-700 dark:text-yellow-400">
                 <strong>Tip:</strong> For best results with sites like
-                hockey.travelsports.com, use the &ldquo;Aggressive&rdquo;
-                scanning mode in the settings below. This enables our advanced
-                dynamic content processing.
+                hockey.travelsports.com, use the &ldquo;Thorough&rdquo; scanning
+                mode in the settings below.
               </p>
             </div>
           </div>
@@ -458,28 +454,22 @@ export default function Home() {
               </h2>
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 Upload an Excel file with coaching websites to scrape or paste
-                URLs directly. Our advanced system will automatically extract
-                all available contact information.
+                URLs directly. Our system will automatically extract all
+                available contact information.
               </p>
             </div>
 
-            {/* Scrape settings selector */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 mb-6 mt-6">
-              <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
-                Configure Scraping Settings
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                Choose how thoroughly to scan websites for coach information.
-                Use &ldquo;Aggressive&rdquo; mode for dynamic sites like
-                hockey.travelsports.com.
-              </p>
-              <ScrapeSettingsSelector onSettingsChange={setScrapeSettings} />
-            </div>
-
-            <EnhancedBatchUploader
-              onBatchScrape={handleBatchScrape}
-              isLoading={isScrapingBatch}
+            {/* Simplified Scrape settings selector */}
+            <SimplifiedScrapeSettingsSelector
+              onSettingsChange={setScrapeSettings}
             />
+
+            <div className="mt-6">
+              <EnhancedBatchUploader
+                onBatchScrape={handleBatchScrape}
+                isLoading={isScrapingBatch}
+              />
+            </div>
           </div>
 
           {/* Progress display (only visible during batch scraping) */}
