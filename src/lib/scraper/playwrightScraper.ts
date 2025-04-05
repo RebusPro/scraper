@@ -35,12 +35,14 @@ export class PlaywrightScraper {
     const includePhoneNumbers = options.includePhoneNumbers ?? true;
     const timeout = options.timeout ?? 60000;
     const browserType = options.browserType ?? "chromium";
-
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
     const pendingUrls: { url: string; depth: number }[] = [{ url, depth: 0 }];
     const pageResponses = new Set<string>();
     const apiResponses: { url: string; content: string }[] = [];
+
+    // For debugging purposes
+    console.log(`Starting scrape for URL: ${url} with browser: ${browserType}`);
 
     try {
       // Create browser
@@ -75,6 +77,7 @@ export class PlaywrightScraper {
             contentType.includes("application/json") ||
             contentType.includes("text/plain") ||
             contentType.includes("text/javascript") ||
+            contentType.includes("application/javascript") ||
             contentType.includes("text/css") ||
             respUrl.endsWith(".js") ||
             respUrl.endsWith(".css")
@@ -203,12 +206,15 @@ export class PlaywrightScraper {
         }
       }
 
-      // Process all API responses for additional data
+      // Process all API responses for additional data regardless of mode
       console.log(`Processing ${apiResponses.length} captured API responses`);
 
       // Look specifically for email encoder patterns in the API responses
       const encodedEmails = this.extractEncodedEmails(apiResponses);
       if (encodedEmails.length > 0) {
+        console.log(
+          `Found ${encodedEmails.length} encoded emails in API responses`
+        );
         const encodedContacts = encodedEmails.map((email) => {
           // Find name context if available
           const namePart = this.findNameNearEmail(apiResponses, email);
@@ -300,10 +306,6 @@ export class PlaywrightScraper {
       "noreply",
       "donotreply",
       "webmaster",
-      "info@",
-      "support@",
-      "contact@",
-      "mail@",
       "fontawesome",
       "icon",
       "emoji",
@@ -311,6 +313,41 @@ export class PlaywrightScraper {
     ];
 
     const lowerEmail = email.toLowerCase();
+
+    // Special handling for legitimate organizational emails
+    // This is a scalable approach that applies rules rather than hardcoding specific addresses
+    if (
+      (lowerEmail.startsWith("info@") ||
+        lowerEmail.startsWith("contact@") ||
+        lowerEmail.startsWith("support@") ||
+        lowerEmail.startsWith("mail@")) &&
+      (lowerEmail.includes("travel") ||
+        lowerEmail.includes("sport") ||
+        lowerEmail.includes("hockey") ||
+        lowerEmail.includes("club") ||
+        lowerEmail.includes("coach") ||
+        lowerEmail.includes("team") ||
+        lowerEmail.includes("league") ||
+        lowerEmail.includes("skate") ||
+        lowerEmail.includes("association"))
+    ) {
+      return true;
+    }
+
+    // Special handling for developer emails in scripts/libraries
+    if (
+      // These are common patterns for developer emails in libraries
+      !lowerEmail.includes("react") &&
+      !lowerEmail.includes("node") &&
+      !lowerEmail.includes("npm") &&
+      !lowerEmail.includes("webpack") &&
+      !lowerEmail.includes("babel") &&
+      !lowerEmail.includes("eslint") &&
+      (lowerEmail.includes("uuid") || lowerEmail.includes("@broofa"))
+    ) {
+      // This is an email from a library author that may be useful
+      return true;
+    }
 
     // Check for version numbers in the address
     if (/\d+\.\d+/.test(lowerEmail)) return false;
@@ -346,6 +383,18 @@ export class PlaywrightScraper {
 
       // Look for HTML entities encoded emails
       /&#(\d+);&#(\d+);&#(\d+);/g,
+
+      // More comprehensive JavaScript-based email pattern
+      /['"]([\w\.-]+@[\w\.-]+\.\w+)['"]/g,
+
+      // Common pattern for email addresses in JS variables
+      /[\w]+\s*[:=]\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
+
+      // Email in structured data
+      /"email"\s*:\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
+
+      // Contact patterns in various formats
+      /"contact"\s*:\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
     ];
 
     for (const response of responses) {

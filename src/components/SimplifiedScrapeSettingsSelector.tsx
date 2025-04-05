@@ -139,7 +139,7 @@ export default function SimplifiedScrapeSettingsSelector({
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
             Deep scanning
             <br />
-            For complex sites
+            For complex & dynamic sites
           </div>
         </button>
       </div>
@@ -167,12 +167,13 @@ export default function SimplifiedScrapeSettingsSelector({
             <div className="mt-1 text-sm text-blue-700 dark:text-blue-400">
               {settingsMode === "aggressive" ? (
                 <p>
-                  For sites like hockey.travelsports.com with dynamic content,
-                  use <strong>Thorough</strong> mode.
+                  For sites with dynamic content or hidden emails (like
+                  hockey.travelsports.com), use <strong>Thorough</strong> mode
+                  for best results.
                 </p>
               ) : settingsMode === "gentle" ? (
                 <p>
-                  Light mode works best for simple sites with easily accessible
+                  Light mode works best for simple sites with easily visible
                   contact information.
                 </p>
               ) : (

@@ -6,8 +6,21 @@
 import { ScrapedContact } from "./types";
 
 // Email regex pattern - comprehensive pattern to detect various email formats
+// Comprehensive email regex that matches emails in various formats
 const EMAIL_REGEX =
   /(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])/gi;
+
+// Additional patterns to catch emails in JavaScript code, JSON, and other formats
+const JS_EMAIL_PATTERNS = [
+  /['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
+  /[\w]+\s*[:=]\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
+  /"email"\s*:\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
+  /"contact"\s*:\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
+  /data-email="([^"]+)"/g,
+  /data-cfemail="([^"]+)"/g,
+  /class="__cf_email__[^>]+data-cfemail="([^"]+)"/g,
+  /\*protected email\*.*?([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g,
+];
 
 // Common name patterns for extracting names near emails
 const NAME_PATTERNS = [
@@ -29,31 +42,59 @@ const PHONE_PATTERNS = [
 ];
 
 /**
- * Extract emails from HTML content
+ * Extract emails from HTML content with enhanced detection for all content types
  */
 export function extractEmails(content: string): string[] {
   // Normalize content by removing extra whitespace
   const normalizedContent = content.replace(/\s+/g, " ");
 
-  // Extract all email addresses
-  const matches = normalizedContent.match(EMAIL_REGEX) || [];
+  // First extract using standard EMAIL_REGEX
+  const standardMatches = normalizedContent.match(EMAIL_REGEX) || [];
 
-  // Filter out invalid/common emails and convert to lowercase
-  return matches
-    .map((email) => email.toLowerCase())
-    .filter((email) => {
-      // Filter out common false positives and example emails
-      return (
-        !email.includes("example.com") &&
-        !email.includes("domain.com") &&
-        !email.includes("your-email") &&
-        !email.includes("someone@") &&
-        !email.includes("username@") &&
-        !email.startsWith("example@") &&
-        !email.startsWith("email@") &&
-        !email.startsWith("info@stylesheet")
+  // Then extract emails from JavaScript code, JSON, etc.
+  const jsMatches: string[] = [];
+  for (const pattern of JS_EMAIL_PATTERNS) {
+    const matches = normalizedContent.match(pattern) || [];
+    for (const match of matches) {
+      // Clean the match to extract just the email part
+      const emailMatch = match.match(
+        /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/
       );
-    });
+      if (emailMatch && emailMatch[1]) {
+        jsMatches.push(emailMatch[1]);
+      }
+    }
+  }
+
+  // Combine all matches
+  const allMatches = [...standardMatches, ...jsMatches];
+
+  // Filter out invalid/common emails, convert to lowercase, and remove duplicates
+  return [
+    ...new Set(
+      allMatches
+        .map((email) => email.toLowerCase().trim())
+        .filter((email) => {
+          // Filter out common false positives and example emails
+          return (
+            email.length > 5 && // Skip very short strings
+            !email.includes("example.com") &&
+            !email.includes("domain.com") &&
+            !email.includes("your-email") &&
+            !email.includes("someone@") &&
+            !email.includes("username@") &&
+            !email.startsWith("example@") &&
+            !email.startsWith("email@") &&
+            !email.startsWith("info@stylesheet") &&
+            !email.includes("eslint") &&
+            !email.includes("webpack") &&
+            !email.includes("babel") &&
+            !/\d+\.\d+\.\d+/.test(email) && // Skip version numbers
+            email.indexOf("@") === email.lastIndexOf("@") // Ensure only one @ symbol
+          );
+        })
+    ),
+  ];
 }
 
 /**
@@ -239,14 +280,72 @@ export function extractObfuscatedEmails(content: string): string[] {
 
   // Pattern 2: Email split across multiple elements
   // This is harder to detect with regex alone, but we can look for common patterns
-  const scriptPattern = /document\.write\('([^']+)'\s*\+\s*'([^']+)'\)/g;
-  while ((match = scriptPattern.exec(content)) !== null) {
-    const combined = match[1] + match[2];
-    const emailMatch = combined.match(EMAIL_REGEX);
-    if (emailMatch) {
-      emails.push(emailMatch[0].toLowerCase());
+  const scriptPatterns = [
+    /document\.write\('([^']+)'\s*\+\s*'([^']+)'\)/g,
+    /document\.write\("([^"]+)"\s*\+\s*"([^"]+)"\)/g,
+    /\.innerHTML\s*=\s*['"]([^'"]+)['"]\s*\+\s*['"]([^'"]+)['"]/g,
+    /\w+\(['"]([^'"]*@[^'"]*)['"]\)/g,
+  ];
+
+  for (const pattern of scriptPatterns) {
+    while ((match = pattern.exec(content)) !== null) {
+      if (match.length >= 3) {
+        // For patterns with captured groups
+        const combined = match[1] + match[2];
+        const emailMatch = combined.match(EMAIL_REGEX);
+        if (emailMatch) {
+          emails.push(emailMatch[0].toLowerCase());
+        }
+      } else if (match.length === 2) {
+        // For patterns with a single captured group
+        const potentialEmail = match[1];
+        if (potentialEmail.includes("@")) {
+          // Extract just the email part if there's other text
+          const emailMatch = potentialEmail.match(
+            /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/
+          );
+          if (emailMatch && emailMatch[1]) {
+            emails.push(emailMatch[1].toLowerCase());
+          }
+        }
+      }
     }
   }
 
-  return emails;
+  // Pattern 3: CloudFlare Email Protection
+  const cfPattern = /data-cfemail="([a-f0-9]+)"/g;
+  while ((match = cfPattern.exec(content)) !== null) {
+    try {
+      // Try to decode CloudFlare encoded email
+      const decoded = decodeCFEmail(match[1]);
+      if (decoded && decoded.includes("@")) {
+        emails.push(decoded.toLowerCase());
+      }
+    } catch {
+      // Ignore decoding errors
+    }
+  }
+
+  return [...new Set(emails)]; // Return unique emails
+}
+
+/**
+ * Decode CloudFlare email protection encoding
+ * Based on the CloudFlare protection algorithm
+ */
+function decodeCFEmail(encodedString: string): string {
+  try {
+    let email = "";
+    const r = parseInt(encodedString.substring(0, 2), 16);
+    let n, i;
+
+    for (n = 2; encodedString.length - n; n += 2) {
+      i = parseInt(encodedString.substring(n, n + 2), 16) ^ r;
+      email += String.fromCharCode(i);
+    }
+
+    return email;
+  } catch {
+    return "";
+  }
 }

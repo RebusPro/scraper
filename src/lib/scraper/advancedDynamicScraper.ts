@@ -5,7 +5,7 @@
 
 import { Page } from "playwright";
 import { ScrapedContact } from "./types";
-import { extractEmails } from "./emailExtractor";
+import { extractEmails, extractObfuscatedEmails } from "./emailExtractor";
 import { getNameFromText, getTitleFromText } from "./utils";
 
 /**
@@ -15,6 +15,7 @@ export async function enhancedProcessCoachDirectory(
   page: Page,
   url: string
 ): Promise<ScrapedContact[]> {
+  console.log(`Enhanced processing for ${url} with improved email extraction`);
   console.log(`Enhanced processing for ${url}`);
   const contacts: ScrapedContact[] = [];
 
@@ -36,9 +37,21 @@ export async function enhancedProcessCoachDirectory(
     // Get all content from the page
     const content = await page.content();
 
-    // Extract emails from text content
+    // Extract emails from text content with enhanced extraction
     const emails = extractEmails(content);
     console.log(`Found ${emails.length} emails in page content`);
+
+    // Also look for obfuscated emails
+    const obfuscatedEmails = extractObfuscatedEmails(content);
+    if (obfuscatedEmails.length > 0) {
+      console.log(`Found ${obfuscatedEmails.length} obfuscated emails`);
+      // Add unique obfuscated emails to our email list
+      for (const email of obfuscatedEmails) {
+        if (!emails.includes(email)) {
+          emails.push(email);
+        }
+      }
+    }
 
     for (const email of emails) {
       // Skip if already added
