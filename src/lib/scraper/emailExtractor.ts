@@ -142,6 +142,52 @@ export function extractEmails(content: string): string[] {
   return [...new Set(filteredEmails)]; // Remove duplicates
 }
 
+// Alias for backward compatibility
+export const extractEmailsFromText = extractEmails;
+
+/**
+ * Generate possible email addresses from a name and domain
+ * Following common email address patterns used by organizations
+ */
+export function generatePossibleEmails(name: string, domain: string): string[] {
+  if (!name || !domain) return [];
+
+  const emails: string[] = [];
+  const normalizedName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Remove diacritics
+
+  // Split name into parts
+  const nameParts = normalizedName.trim().split(/\s+/);
+
+  // Handle case where there might be multiple last names or middle names
+  const firstName = nameParts[0].toLowerCase();
+  const lastName = nameParts[nameParts.length - 1].toLowerCase();
+
+  // If more than 2 parts, get potential middle initial
+  let middleInitial = "";
+  if (nameParts.length > 2) {
+    middleInitial = nameParts[1].charAt(0).toLowerCase();
+  }
+
+  // Common email patterns
+  emails.push(`${firstName}.${lastName}@${domain}`); // john.doe@example.com
+  emails.push(`${firstName}${lastName}@${domain}`); // johndoe@example.com
+  emails.push(`${lastName}.${firstName}@${domain}`); // doe.john@example.com
+  emails.push(`${lastName}${firstName}@${domain}`); // doejohn@example.com
+  emails.push(`${firstName}@${domain}`); // john@example.com
+  emails.push(`${firstName}_${lastName}@${domain}`); // john_doe@example.com
+  emails.push(`${firstName}-${lastName}@${domain}`); // john-doe@example.com
+  emails.push(`${firstName.charAt(0)}${lastName}@${domain}`); // jdoe@example.com
+
+  // Add with middle initial if available
+  if (middleInitial) {
+    emails.push(`${firstName}.${middleInitial}.${lastName}@${domain}`); // john.d.doe@example.com
+    emails.push(`${firstName}${middleInitial}${lastName}@${domain}`); // johndoe@example.com
+  }
+
+  // Remove duplicates and return
+  return [...new Set(emails)];
+}
+
 /**
  * Check if an email is from a known library author
  */
@@ -499,27 +545,19 @@ export function processContactData(
     else if (emails.length === 0 && phoneNumbers.length < 4) {
       // Additional strict validation for phone-only cases
       const highlyLikelyPhones = phoneNumbers.filter((phone) => {
-        // Must match common US/Canada formats
-        return (
-          /(\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}/.test(
-            phone
-          ) &&
-          // Must not look like a date
-          !/\b(19|20)\d{2}\b/.test(phone)
+        // More stringent pattern for standalone phone numbers (more likely to be US/Canada)
+        return /(?:\+?1[-\.\s]?)?\(?\d{3}\)?[-\.\s]?\d{3}[-\.\s]?\d{4}/.test(
+          phone
         );
       });
 
-      // Only if we have 1-2 highly likely phone numbers
-      if (highlyLikelyPhones.length > 0 && highlyLikelyPhones.length < 3) {
-        for (const phone of highlyLikelyPhones) {
-          // Sanitize the phone number to use only digits for the email address
-          const sanitizedPhone = phone.replace(/\D/g, "");
-          contacts.push({
-            email: `phone-only-${sanitizedPhone}@placeholder.invalid`,
-            phone,
-            source: url,
-          });
-        }
+      for (const phone of highlyLikelyPhones) {
+        const sanitizedPhone = phone.replace(/\D/g, "");
+        contacts.push({
+          email: `phone-only-${sanitizedPhone}@placeholder.invalid`,
+          phone,
+          source: url,
+        });
       }
     }
   }

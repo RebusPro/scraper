@@ -1,733 +1,221 @@
 /**
- * Advanced dynamic scraper with specialized handling for complex websites
- * Designed to extract coach information from various website structures
+ * Enhanced Dynamic Scraper - Specialized for coach websites with dynamic content
  */
+
+import { Page } from "playwright";
 import { ScrapedContact } from "./types";
 import {
-  extractEmails,
-  extractNameFromContext,
-  extractTitleFromContext,
-  processContactData,
+  extractEmailsFromText,
+  generatePossibleEmails,
 } from "./emailExtractor";
-import { Page, ElementHandle } from "playwright";
+import { getNameFromText, getTitleFromText } from "./utils";
+import { processCoachDirectory } from "./dynamicScraper";
+
+// Maximum number of resources to capture per page to prevent getting stuck
+const MAX_RESOURCES_PER_PAGE = 50;
 
 /**
- * Enhanced coach directory processor with specialized strategies for complex sites
+ * Main entry point for enhanced coach directory processing
  */
 export async function enhancedProcessCoachDirectory(
   page: Page,
   url: string
 ): Promise<ScrapedContact[]> {
   console.log(`Applying enhanced coach directory processing for ${url}`);
-  const contacts: ScrapedContact[] = [];
 
-  try {
-    // 1. First try page interaction to load dynamic content
-    await interactWithPage(page);
+  const allContacts: ScrapedContact[] = [];
+  let resourceCount = 0;
 
-    // 2. Apply site-specific strategies based on domain patterns
-    const domainSpecificContacts = await applyDomainSpecificStrategies(
-      page,
-      url
-    );
-    if (domainSpecificContacts.length > 0) {
-      console.log(
-        `Found ${domainSpecificContacts.length} contacts using domain-specific strategy`
-      );
-      contacts.push(...domainSpecificContacts);
-      return contacts;
-    }
-
-    // 3. Apply general coach directory strategies if no domain-specific results
-    const generalContacts = await extractContactsWithGeneralStrategy(page, url);
-    contacts.push(...generalContacts);
-
-    // 4. If still no results, try contact page navigation
-    if (contacts.length === 0) {
-      const contactPageContacts = await navigateToContactPages(page, url);
-      contacts.push(...contactPageContacts);
-    }
-
-    // 5. If still no results, try email pattern generation from team members
-    if (contacts.length === 0) {
-      const generatedContacts = await generateContactsFromTeamMembers(
-        page,
-        url
-      );
-      contacts.push(...generatedContacts);
-    }
-
-    // Remove duplicate contacts
-    return removeDuplicateContacts(contacts);
-  } catch (error) {
-    console.error("Error in enhancedProcessCoachDirectory:", error);
-    return contacts;
-  }
-}
-
-/**
- * Interact with the page to reveal dynamic content
- */
-async function interactWithPage(page: Page): Promise<void> {
-  try {
-    // Wait for the page to be fully loaded
-    await page.waitForLoadState("networkidle").catch(() => {});
-
-    // Scroll down slowly to trigger lazy loading
-    await autoScroll(page);
-
-    // Check for and click "Load More" or pagination buttons
-    await clickLoadMoreButtons(page);
-
-    // Expand collapsed content
-    await expandCollapsedContent(page);
-
-    // Wait for any triggered content to load
-    await page.waitForLoadState("networkidle").catch(() => {});
-  } catch (error) {
-    console.error("Error interacting with page:", error);
-  }
-}
-
-/**
- * Auto-scroll the page to trigger lazy loading
- */
-async function autoScroll(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    await new Promise<void>((resolve) => {
-      let totalHeight = 0;
-      const distance = 100;
-      const timer = setInterval(() => {
-        const scrollHeight = document.body.scrollHeight;
-        window.scrollBy(0, distance);
-        totalHeight += distance;
-
-        if (totalHeight >= scrollHeight) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, 100);
-    });
+  // Set a page resource counter to prevent getting stuck
+  page.on("request", () => {
+    resourceCount++;
   });
-}
 
-/**
- * Click "Load More", "Show More", or pagination buttons
- */
-async function clickLoadMoreButtons(page: Page): Promise<void> {
-  try {
-    const loadMoreSelectors = [
-      "button:has-text('Load More')",
-      "button:has-text('Show More')",
-      "a:has-text('Load More')",
-      "a:has-text('Next')",
-      "button:has-text('View More')",
-      ".load-more",
-      ".pagination .next",
-      "[class*='load-more']",
-      "[class*='show-more']",
-      "button:has-text('View All')",
-    ];
-
-    for (const selector of loadMoreSelectors) {
-      const button = await page.$(selector);
-      if (button) {
-        console.log(`Found load more button: ${selector}`);
-        await button.click().catch(() => {});
-        await page.waitForLoadState("networkidle").catch(() => {});
-        // Wait a moment for content to load
-        await page.waitForTimeout(1000);
-      }
-    }
-  } catch (error) {
-    console.error("Error clicking load more buttons:", error);
-  }
-}
-
-/**
- * Expand collapsed content like accordions or dropdown panels
- */
-async function expandCollapsedContent(page: Page): Promise<void> {
-  try {
-    const expandSelectors = [
-      ".accordion:not(.expanded)",
-      ".collapse:not(.show)",
-      ".expandable:not(.expanded)",
-      "[aria-expanded='false']",
-      ".closed",
-      ".toggle:not(.active)",
-      "summary",
-    ];
-
-    for (const selector of expandSelectors) {
-      const expandElements = await page.$$(selector);
-      for (const element of expandElements) {
-        await element.click().catch(() => {});
-        await page.waitForTimeout(300);
-      }
-    }
-  } catch (error) {
-    console.error("Error expanding collapsed content:", error);
-  }
-}
-
-/**
- * Apply domain-specific scraping strategies
- */
-async function applyDomainSpecificStrategies(
-  page: Page,
-  url: string
-): Promise<ScrapedContact[]> {
-  // Handle Travel Sports coaching directory
-  if (url.includes("travelsports.com/coaches")) {
-    return await processTravelSportsCoaches(page, url);
-  }
-
-  // Domain-specific strategies based on URL patterns
-  if (url.includes("teamusa.org") || url.includes("usahockey")) {
-    return await processUSAHockeySite(page, url);
-  }
-
-  if (url.includes("ncaa.") || url.includes(".edu")) {
-    return await processCollegeAthleticsSite(page, url);
-  }
-
-  // More domain-specific handlers can be added here
-
-  return [];
-}
-
-/**
- * Specialized handler for Travel Sports coaching directory with improved interaction
- */
-async function processTravelSportsCoaches(
-  page: Page,
-  url: string
-): Promise<ScrapedContact[]> {
-  console.log(
-    "Processing Travel Sports Coaches directory with enhanced strategy"
-  );
-  const contacts: ScrapedContact[] = [];
+  // Set a timeout to prevent infinite processing
+  const processingTimeout = setTimeout(() => {
+    console.log(`Processing timeout reached for ${url}`);
+    return allContacts;
+  }, 45000);
 
   try {
-    // First, interact with filters to make sure all coaches are loaded
-    const filterSelectors = [
-      "select", // Generic dropdowns
-      "[class*='filter']", // Classes containing "filter"
-      "[id*='filter']", // IDs containing "filter"
-      "button.filter-button", // Specific filter buttons
-    ];
+    // Try multiple strategies to extract coach information
 
-    // Attempt to interact with filter selectors
-    for (const selector of filterSelectors) {
-      const filters = await page.$$(selector);
-      if (filters.length > 0) {
-        console.log(
-          `Found ${filters.length} filter elements with selector: ${selector}`
-        );
-      }
-    }
+    // Strategy 1: Apply general coach extraction
+    console.log("Applying general coach extraction strategy");
+    const generalContacts = await extractCoachesGeneralStrategy(page, url);
+    allContacts.push(...generalContacts);
 
-    // Apply a more comprehensive approach to extract coach information
-    const coachData = await page.evaluate(() => {
-      const coaches: Array<{
-        name: string | null;
-        title: string | null;
-        url: string | null;
-        emails: string[];
-      }> = [];
-
-      // Get all coach entries from the list (more comprehensive selector)
-      const coachEntries = Array.from(
-        document.querySelectorAll(
-          'a[href*="/coaches/"], [class*="coach"], [class*="staff"], li:has(a[href*="/coaches/"])'
-        )
+    // Check if we've hit resource limit before continuing
+    if (resourceCount > MAX_RESOURCES_PER_PAGE) {
+      console.log(
+        `Resource limit reached (${resourceCount}), stopping further processing`
       );
-
-      // Process each potential coach entry
-      coachEntries.forEach((entry) => {
-        const element = entry as HTMLElement;
-
-        // Try to get the URL (either from the element if it's a link, or from a child link)
-        let url: string | null = null;
-        if (element.tagName === "A") {
-          url = element.getAttribute("href");
-        } else {
-          const link = element.querySelector('a[href*="/coaches/"]');
-          if (link) url = link.getAttribute("href");
-        }
-
-        if (!url || url.includes("/register") || url === "/coaches") return;
-
-        // Get the element that contains all coach information
-        const coachCard = element.closest("li, div, article");
-        if (!coachCard) return;
-
-        // Extract coach name with multiple strategies
-        let name: string | null = null;
-
-        // Strategy 1: Look for strong tags inside links
-        const nameEl = coachCard.querySelector(
-          'a[href*="/coaches/"] strong, h3, h4, [class*="name"], strong'
-        );
-        if (nameEl && nameEl.textContent) {
-          name = nameEl.textContent.trim();
-        }
-
-        // Strategy 2: If no name found, try to extract from URL
-        if (!name && url) {
-          const urlName = url.split("/").pop()?.replace(/-/g, " ");
-          if (urlName) name = urlName;
-        }
-
-        // Strategy 3: Look for text formatting that suggests a name
-        if (!name) {
-          const textElements = Array.from(coachCard.querySelectorAll("*"));
-          for (const el of textElements) {
-            const text = el.textContent?.trim();
-            if (text && /^[A-Z][a-z]+ [A-Z][a-z]+$/.test(text)) {
-              name = text;
-              break;
-            }
-          }
-        }
-
-        // Extract specialties and divisions with a more flexible approach
-        let title: string | null = null;
-
-        // Look for any element that contains specific keywords
-        const allElements = Array.from(coachCard.querySelectorAll("*"));
-        for (const el of allElements) {
-          const text = el.textContent?.trim();
-          if (!text) continue;
-
-          if (
-            text.includes("Specialties:") ||
-            text.includes("Divisions:") ||
-            text.includes("Position:") ||
-            text.includes("Ages:")
-          ) {
-            title = text;
-            break;
-          }
-        }
-
-        // If no specific title found but we have a name, use a generic title
-        if (!title && name) {
-          title = "Hockey Coach";
-        }
-
-        // Construct possible email formats from the name
-        const possibleEmails: string[] = [];
-        if (name) {
-          const nameParts = name.split(" ");
-          if (nameParts.length >= 2) {
-            const firstName = nameParts[0].toLowerCase();
-            const lastName = nameParts[nameParts.length - 1].toLowerCase();
-
-            // Common email patterns
-            possibleEmails.push(
-              `${firstName}.${lastName}@travelsports.com`,
-              `${firstName}${lastName}@travelsports.com`,
-              `${firstName[0]}${lastName}@travelsports.com`,
-              `${lastName}.${firstName}@travelsports.com`,
-              `${lastName}${firstName[0]}@travelsports.com`,
-              `${firstName}@travelsports.com`,
-              `${lastName}@travelsports.com`,
-              `${firstName}.${lastName}@hockey.travelsports.com`,
-              `coach@${lastName}hockey.com`,
-              `coach.${lastName}@travelsports.com`,
-              `info@${lastName}hockey.com`
-            );
-
-            // Add domain variations for common hockey email domains
-            const commonDomains = [
-              "hockey.com",
-              "hockeycoach.com",
-              "icehockey.com",
-              "coach.com",
-            ];
-            for (const domain of commonDomains) {
-              possibleEmails.push(
-                `${firstName}.${lastName}@${domain}`,
-                `${firstName}${lastName}@${domain}`,
-                `coach.${lastName}@${domain}`
-              );
-            }
-          }
-        }
-
-        coaches.push({
-          name,
-          title,
-          url,
-          emails: possibleEmails,
-        });
-      });
-
-      return coaches;
-    });
-
-    console.log(`Found ${coachData.length} potential coaches on the page`);
-
-    // Process each coach data entry
-    for (const coach of coachData) {
-      if (coach.name) {
-        const bestEmail =
-          coach.emails && coach.emails.length > 0
-            ? coach.emails[0] // Use first email format as primary
-            : `${coach.name
-                .replace(/\s+/g, ".")
-                .toLowerCase()}@travelsports.com`;
-
-        contacts.push({
-          email: bestEmail,
-          name: coach.name,
-          title: coach.title || "Hockey Coach",
-          source: url,
-          alternateEmails:
-            coach.emails && coach.emails.length > 1
-              ? coach.emails.slice(1) // Store alternative email formats
-              : undefined,
-          confidence: "Generated - Verification Required", // Mark as generated
-        });
-      }
+      return allContacts;
     }
 
-    console.log(
-      `Generated ${contacts.length} potential contacts from Travel Sports`
-    );
+    // Strategy 2: Find and navigate to contact pages
+    const contactPageContacts = await navigateToContactPages(page, url);
+    allContacts.push(...contactPageContacts);
 
-    // Visit a few coach profiles to try to find actual emails (not just generated ones)
-    if (coachData.length > 0) {
-      // Get up to 3 coach URLs to visit
-      const coachUrls = coachData
-        .filter((coach) => coach.url)
-        .map((coach) => {
-          const path = coach.url;
-          if (!path) return null;
-          if (path.startsWith("http")) return path;
-          if (path.startsWith("/")) {
-            // Convert relative URL to absolute
-            const baseUrl = new URL(url);
-            return `${baseUrl.protocol}//${baseUrl.host}${path}`;
-          }
-          return path;
-        })
-        .filter((url): url is string => url !== null && url !== "")
-        .slice(0, 3);
-
-      console.log(`Will visit ${coachUrls.length} individual coach pages`);
-
-      // Visit coach profile pages to extract real emails
-      for (const coachUrl of coachUrls) {
-        try {
-          await page.goto(coachUrl, { waitUntil: "domcontentloaded" });
-          await page.waitForLoadState("networkidle").catch(() => {});
-
-          // Extract coach info from profile page
-          const content = await page.content();
-          const emails = extractEmails(content);
-
-          if (emails.length > 0) {
-            console.log(
-              `Found ${emails.length} real emails on coach profile: ${coachUrl}`
-            );
-
-            // Process the real emails found
-            emails.forEach((email) => {
-              // Extract name from URL or page content
-              const nameFromUrl = coachUrl.split("/").pop()?.replace(/-/g, " ");
-              const name =
-                extractNameFromContext(email, content) ||
-                nameFromUrl ||
-                "Coach";
-
-              const title =
-                extractTitleFromContext(email, content) ||
-                extractTitleFromContext(name, content) ||
-                "Hockey Coach";
-
-              // Replace any generated contact with the same name with this real email
-              const existingIndex = contacts.findIndex(
-                (c) =>
-                  c.name && name && c.name.toLowerCase() === name.toLowerCase()
-              );
-
-              if (existingIndex >= 0) {
-                contacts[existingIndex] = {
-                  email,
-                  name,
-                  title,
-                  source: coachUrl,
-                  confidence: "Confirmed", // Mark as confirmed email
-                };
-              } else {
-                contacts.push({
-                  email,
-                  name,
-                  title,
-                  source: coachUrl,
-                  confidence: "Confirmed", // Mark as confirmed email
-                });
-              }
-            });
-          }
-        } catch (error) {
-          console.error(`Error processing coach profile ${coachUrl}:`, error);
-        }
-      }
+    // Check if we've hit resource limit before continuing
+    if (resourceCount > MAX_RESOURCES_PER_PAGE) {
+      console.log(
+        `Resource limit reached (${resourceCount}), stopping further processing`
+      );
+      return allContacts;
     }
 
-    return removeDuplicateContacts(contacts);
-  } catch (error) {
-    console.error("Error in enhanced processTravelSportsCoaches:", error);
-    return contacts;
-  }
-}
+    // Strategy 3: Apply specialized coach directory processing
+    console.log(`Applying specialized coach directory processing for ${url}`);
+    const specializedContacts = await processCoachElements(page);
+    allContacts.push(...specializedContacts);
 
-/**
- * Process USA Hockey/Team USA sites
- */
-async function processUSAHockeySite(
-  page: Page,
-  url: string
-): Promise<ScrapedContact[]> {
-  console.log("Processing USA Hockey site");
-  const contacts: ScrapedContact[] = [];
-
-  try {
-    // Common patterns for USA Hockey sites
-    const staffSelectors = [
-      ".staff-member",
-      ".team-member",
-      ".coach-profile",
-      ".directory-item",
-      "[class*='staff']",
-      "[class*='coach']",
-      "[class*='directory']",
-    ];
-
-    // Try each selector
-    for (const selector of staffSelectors) {
-      const staffElements = await page.$$(selector);
-      if (staffElements.length > 0) {
-        console.log(
-          `Found ${staffElements.length} staff members with selector: ${selector}`
-        );
-
-        // Process each staff element
-        for (const element of staffElements) {
-          const staffInfo = await element.evaluate((el) => {
-            // Name extraction
-            const nameElement = el.querySelector(
-              "h2, h3, h4, .name, [class*='name'], strong"
-            );
-            const name = nameElement ? nameElement.textContent?.trim() : null;
-
-            // Title extraction
-            const titleElement = el.querySelector(
-              ".title, [class*='title'], [class*='position'], em, i"
-            );
-            const title = titleElement
-              ? titleElement.textContent?.trim()
-              : null;
-
-            // Email extraction
-            let email = null;
-            const emailLink = el.querySelector("a[href^='mailto:']");
-            if (emailLink) {
-              const href = emailLink.getAttribute("href");
-              if (href) email = href.replace("mailto:", "").trim();
-            }
-
-            return { name, title, email };
-          });
-
-          if (staffInfo.name) {
-            contacts.push({
-              email:
-                staffInfo.email ||
-                `${staffInfo.name
-                  .replace(/\s+/g, ".")
-                  .toLowerCase()}@usahockey.org`,
-              name: staffInfo.name,
-              title: staffInfo.title || "Coach",
-              source: url,
-              confidence: staffInfo.email ? "Confirmed" : "Generated",
-            });
-          }
-        }
-
-        // If we found staff members, no need to try other selectors
-        if (contacts.length > 0) break;
-      }
-    }
-
-    return contacts;
-  } catch (error) {
-    console.error("Error processing USA Hockey site:", error);
-    return contacts;
-  }
-}
-
-/**
- * Process college athletics sites (NCAA, university sites, etc.)
- */
-async function processCollegeAthleticsSite(
-  page: Page,
-  url: string
-): Promise<ScrapedContact[]> {
-  console.log("Processing College Athletics site");
-  const contacts: ScrapedContact[] = [];
-
-  try {
-    // Common patterns for college sites
-    const coachSelectors = [
-      ".staff-bio",
-      ".coach-bio",
-      ".coach-card",
-      ".staff-member",
-      ".directory-item",
-      "[class*='coach']",
-      "[class*='staff']",
-      "table tr",
-    ];
-
-    // Try each selector
-    for (const selector of coachSelectors) {
-      const coachElements = await page.$$(selector);
-      if (coachElements.length > 0) {
-        console.log(
-          `Found ${coachElements.length} coaches with selector: ${selector}`
-        );
-
-        // Process each coach element
-        for (const element of coachElements) {
-          const coachInfo = await element.evaluate((el) => {
-            // Name extraction
-            const nameElement = el.querySelector(
-              "h2, h3, h4, .name, [class*='name'], a, strong, td:first-child"
-            );
-            const name = nameElement ? nameElement.textContent?.trim() : null;
-
-            // Title extraction
-            const titleElement = el.querySelector(
-              ".title, [class*='title'], [class*='position'], em, i, td:nth-child(2)"
-            );
-            const title = titleElement
-              ? titleElement.textContent?.trim()
-              : null;
-
-            // Email extraction
-            let email = null;
-            const emailLink = el.querySelector("a[href^='mailto:']");
-            if (emailLink) {
-              const href = emailLink.getAttribute("href");
-              if (href) email = href.replace("mailto:", "").trim();
-            }
-
-            return { name, title, email };
-          });
-
-          if (coachInfo.name) {
-            // Extract domain from URL
-            const domain = new URL(url).hostname;
-
-            contacts.push({
-              email:
-                coachInfo.email ||
-                `${coachInfo.name
-                  .replace(/\s+/g, ".")
-                  .toLowerCase()}@${domain}`,
-              name: coachInfo.name,
-              title: coachInfo.title || "Coach",
-              source: url,
-              confidence: coachInfo.email ? "Confirmed" : "Generated",
-            });
-          }
-        }
-
-        // If we found coaches, no need to try other selectors
-        if (contacts.length > 0) break;
-      }
-    }
-
-    return contacts;
-  } catch (error) {
-    console.error("Error processing College Athletics site:", error);
-    return contacts;
-  }
-}
-
-/**
- * Extract contacts using general strategy for coach directories
- */
-async function extractContactsWithGeneralStrategy(
-  page: Page,
-  url: string
-): Promise<ScrapedContact[]> {
-  console.log("Applying general coach extraction strategy");
-  const contacts: ScrapedContact[] = [];
-
-  try {
-    // 1. Extract all mailto links - most reliable method
-    const mailtoLinks = await page.$$("a[href^='mailto:']");
-    for (const link of mailtoLinks) {
+    // Strategy 4: Fall back to the legacy processor as a last resort
+    if (allContacts.length === 0) {
       try {
-        const href = await link.getAttribute("href");
-        if (href && href.startsWith("mailto:")) {
-          const email = href.replace("mailto:", "").trim();
+        const legacyContacts = await processCoachDirectory(page, url);
+        allContacts.push(...legacyContacts);
+      } catch (err) {
+        console.error("Error in legacy coach processor:", err);
+      }
+    }
 
-          // Get context around the mailto link
-          const contextHTML = await link.evaluate((el) => {
-            const parent = el.closest("div, li, article, section, tr");
-            return parent ? parent.innerHTML : el.innerHTML;
-          });
+    // Remove duplicates by email
+    return removeDuplicateContacts(allContacts);
+  } catch (err) {
+    console.error(`Error in enhanced coach directory processing: ${err}`);
+    return allContacts;
+  } finally {
+    clearTimeout(processingTimeout);
+  }
+}
 
-          const name = extractNameFromContext(email, contextHTML);
-          const title = name
-            ? extractTitleFromContext(name, contextHTML)
-            : extractTitleFromContext(email, contextHTML);
+/**
+ * Extract coaches using a general strategy
+ */
+async function extractCoachesGeneralStrategy(
+  page: Page,
+  url: string
+): Promise<ScrapedContact[]> {
+  const contacts: ScrapedContact[] = [];
 
+  try {
+    // Extract emails from the entire page
+    const content = await page.content();
+    const emails = extractEmailsFromText(content);
+
+    // Look for context around emails to find names and titles
+    for (const email of emails) {
+      // Get surrounding text for context
+      const contextSelector = `//text()[contains(., '${email}')]/ancestor::*[position() <= 3]`;
+      const contexts = await page.locator(contextSelector).allTextContents();
+
+      const context = contexts.join(" ");
+      const name = getNameFromText(context) || "";
+      const title = getTitleFromText(context) || "";
+
+      contacts.push({
+        email,
+        name,
+        title,
+        url,
+        confidence: "Confirmed",
+        source: "General extraction",
+      });
+    }
+
+    // If no emails found directly, try to extract names and generate potential emails
+    if (contacts.length === 0) {
+      await generateContactsFromNames(page, url, contacts);
+    }
+
+    return contacts;
+  } catch (err) {
+    console.error(`Error in general extraction: ${err}`);
+    return contacts;
+  }
+}
+
+/**
+ * Generate contacts from staff/team member names
+ */
+async function generateContactsFromNames(
+  page: Page,
+  url: string,
+  contacts: ScrapedContact[]
+): Promise<void> {
+  try {
+    // Look for potential team member/staff elements
+    const nameSelectors = [
+      // Common selectors for coach/staff sections
+      ".coach, .staff, .team-member, .directory-item, .person, .contact-info, .faculty, .employee",
+      // Card-like elements often used for staff
+      ".card, .profile-card, .member-card, .bio-card",
+      // List items in team/staff sections
+      "ul.staff li, ul.team li, ul.coaches li, ul.faculty li",
+      // Elements with common staff-related terms
+      "[class*='coach'], [class*='staff'], [class*='team'], [class*='faculty'], [class*='directory']",
+    ];
+
+    // Try each selector to find potential team members
+    const teamMembers: string[] = [];
+    for (const selector of nameSelectors) {
+      try {
+        const elements = await page.$$(selector);
+        console.log(`Found ${elements.length} potential team members`);
+
+        for (const element of elements) {
+          const text = (await element.textContent()) || "";
+          teamMembers.push(text);
+        }
+
+        if (teamMembers.length > 0) break;
+      } catch {
+        // Ignore errors for individual selectors
+      }
+    }
+
+    // Process member names
+    const domain = extractDomain(url);
+    let generatedCount = 0;
+
+    for (const text of teamMembers) {
+      const name = getNameFromText(text);
+      const title = getTitleFromText(text);
+
+      if (name && domain) {
+        const possibleEmails = generatePossibleEmails(name, domain);
+
+        for (const email of possibleEmails) {
           contacts.push({
             email,
-            name: name || undefined,
-            title: title || undefined,
-            source: url,
-            confidence: "Confirmed",
+            name,
+            title: title || "",
+            url,
+            confidence: "Generated",
+            source: "Name-based generation",
           });
+          generatedCount++;
+
+          // Limit the number of generated emails to avoid overwhelming results
+          if (generatedCount >= 5) break;
         }
-      } catch (error) {
-        console.error("Error processing mailto link:", error);
       }
     }
+  } catch (err) {
+    console.error(`Error generating contacts from names: ${err}`);
+  }
+}
 
-    // 2. If no mailto links found, look for email patterns in the page content
-    if (contacts.length === 0) {
-      const content = await page.content();
-      const emails = extractEmails(content);
-
-      for (const email of emails) {
-        const name = extractNameFromContext(email, content);
-        const title = name
-          ? extractTitleFromContext(name, content)
-          : extractTitleFromContext(email, content);
-
-        contacts.push({
-          email,
-          name: name || undefined,
-          title: title || undefined,
-          source: url,
-          confidence: "Confirmed",
-        });
-      }
-    }
-
-    return contacts;
-  } catch (error) {
-    console.error("Error in general extraction strategy:", error);
-    return contacts;
+/**
+ * Extract domain from URL
+ */
+function extractDomain(url: string): string {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname.startsWith("www.") ? hostname.substring(4) : hostname;
+  } catch {
+    return "";
   }
 }
 
@@ -738,238 +226,343 @@ async function navigateToContactPages(
   page: Page,
   originalUrl: string
 ): Promise<ScrapedContact[]> {
-  console.log("Navigating to contact pages");
   const contacts: ScrapedContact[] = [];
+  const visitedUrls = new Set<string>([originalUrl]);
 
   try {
-    // Find contact page links
-    const contactLinks = await page.evaluate(() => {
-      const links: string[] = [];
-      const contactTerms = [
-        "contact",
-        "staff",
-        "directory",
-        "coaches",
-        "about",
-        "team",
-      ];
+    console.log("Navigating to contact pages");
 
-      // Get all links
-      const allLinks = Array.from(document.querySelectorAll("a"));
+    // Find potential contact page links
+    const contactLinkSelectors = [
+      // Common contact page link texts
+      "a:has-text('Contact')",
+      "a:has-text('Contact Us')",
+      "a:has-text('Staff')",
+      "a:has-text('Coaches')",
+      "a:has-text('Our Team')",
+      "a:has-text('Directory')",
+      "a:has-text('Faculty')",
+      "a:has-text('Meet the Team')",
+      "a:has-text('Meet Our Staff')",
+      "a:has-text('Meet Our Coaches')",
 
-      // Filter for contact-related links
-      for (const link of allLinks) {
-        const href = link.getAttribute("href");
-        if (!href) continue;
+      // Common contact page link classes/ids
+      "a[href*='contact']",
+      "a[href*='staff']",
+      "a[href*='team']",
+      "a[href*='coaches']",
+      "a[href*='directory']",
+      "a[href*='about']",
+      "a[href*='faculty']",
+    ];
 
-        const text = link.textContent?.toLowerCase() || "";
-        const hrefLower = href.toLowerCase();
+    // Get all potential contact page URLs
+    const contactPageUrls: string[] = [];
+    for (const selector of contactLinkSelectors) {
+      const links = await page.$$(selector);
+      for (const link of links) {
+        try {
+          const href = await link.getAttribute("href");
+          if (href) {
+            let fullUrl = href;
+            if (href.startsWith("/") || !href.includes("://")) {
+              const baseUrl = new URL(originalUrl);
+              fullUrl = new URL(href, baseUrl.origin).toString();
+            }
 
-        // Check if link text or href contains contact terms
-        const isContactLink = contactTerms.some(
-          (term) => text.includes(term) || hrefLower.includes(term)
-        );
-
-        if (isContactLink) {
-          // Convert to absolute URL if needed
-          if (href.startsWith("http")) {
-            links.push(href);
-          } else if (href.startsWith("/")) {
-            links.push(window.location.origin + href);
-          } else {
-            links.push(window.location.origin + "/" + href);
-          }
-        }
-      }
-
-      // Remove duplicates
-      return [...new Set(links)];
-    });
-
-    console.log(`Found ${contactLinks.length} potential contact pages`);
-
-    // Visit up to 3 contact pages
-    for (const link of contactLinks.slice(0, 3)) {
-      try {
-        console.log(`Navigating to contact page: ${link}`);
-        await page.goto(link, { waitUntil: "domcontentloaded" });
-        await page.waitForLoadState("networkidle").catch(() => {});
-
-        // Extract contacts from this page
-        const pageContacts = await extractContactsWithGeneralStrategy(
-          page,
-          link
-        );
-        contacts.push(...pageContacts);
-      } catch (error) {
-        console.error(`Error processing contact page ${link}:`, error);
-      }
-    }
-
-    // Return to the original page
-    if (contactLinks.length > 0) {
-      await page.goto(originalUrl, { waitUntil: "domcontentloaded" });
-      await page.waitForLoadState("networkidle").catch(() => {});
-    }
-
-    return contacts;
-  } catch (error) {
-    console.error("Error navigating to contact pages:", error);
-    return contacts;
-  }
-}
-
-/**
- * Generate email contacts from team member names when no emails are available
- */
-async function generateContactsFromTeamMembers(
-  page: Page,
-  url: string
-): Promise<ScrapedContact[]> {
-  console.log("Generating contacts from team member names");
-  const contacts: ScrapedContact[] = [];
-
-  try {
-    // Extract domain from URL for email generation
-    const urlObj = new URL(url);
-    const domain = urlObj.hostname;
-
-    // Find team member names on the page
-    const teamMembers = await page.evaluate(() => {
-      const members: { name: string; title: string | null }[] = [];
-
-      // Look for name patterns in headings, strong text, etc.
-      const nameElements = document.querySelectorAll(
-        "h1, h2, h3, h4, h5, strong, [class*='name']"
-      );
-
-      for (const el of nameElements) {
-        const text = el.textContent?.trim();
-        if (!text || text.length < 4 || text.length > 40) continue;
-
-        // Look for standard name patterns (First Last)
-        if (/^[A-Z][a-z]+(?:\s[A-Z][a-z]+)+$/.test(text)) {
-          // Find potential title near this name
-          let title = null;
-
-          // Check next sibling
-          let sibling = el.nextElementSibling;
-          if (
-            sibling &&
-            sibling.textContent &&
-            sibling.textContent.length < 100
-          ) {
-            title = sibling.textContent.trim();
-          }
-
-          // Check parent's next sibling
-          if (
-            !title &&
-            el.parentElement &&
-            el.parentElement.nextElementSibling
-          ) {
-            const parentSibling = el.parentElement.nextElementSibling;
+            // Only add valid URLs that haven't been visited and are on the same domain
             if (
-              parentSibling.textContent &&
-              parentSibling.textContent.length < 100
+              fullUrl.includes("://") &&
+              !visitedUrls.has(fullUrl) &&
+              isSameDomain(fullUrl, originalUrl) &&
+              !isResourceUrl(fullUrl)
             ) {
-              title = parentSibling.textContent.trim();
+              contactPageUrls.push(fullUrl);
+              visitedUrls.add(fullUrl);
             }
           }
-
-          members.push({
-            name: text,
-            title,
-          });
+        } catch {
+          // Skip problematic links
         }
       }
+    }
 
-      return members;
-    });
+    console.log(`Found ${contactPageUrls.length} potential contact pages`);
 
-    console.log(`Found ${teamMembers.length} potential team members`);
-
-    // Generate email addresses for team members
-    for (const member of teamMembers) {
-      // Skip very common names that might be false positives
-      if (["Contact Us", "About Us", "Home Page"].includes(member.name))
-        continue;
-
-      // Generate email formats
-      const nameParts = member.name.split(" ");
-      if (nameParts.length >= 2) {
-        const firstName = nameParts[0].toLowerCase();
-        const lastName = nameParts[nameParts.length - 1].toLowerCase();
-
-        // Primary email format (most common)
-        const primaryEmail = `${firstName}.${lastName}@${domain}`;
-
-        // Alternative email formats
-        const alternateEmails = [
-          `${firstName}${lastName}@${domain}`,
-          `${firstName[0]}${lastName}@${domain}`,
-          `${lastName}${firstName[0]}@${domain}`,
-          `${firstName}@${domain}`,
-          `${lastName}@${domain}`,
-          `${firstName}_${lastName}@${domain}`,
-          `${lastName}.${firstName}@${domain}`,
-        ];
-
-        contacts.push({
-          email: primaryEmail,
-          name: member.name,
-          title: member.title || "Coach",
-          source: url,
-          alternateEmails: alternateEmails,
-          confidence: "Generated - Verification Required",
+    // Visit top 3 most promising contact pages
+    const priorityPages = prioritizeContactPages(contactPageUrls);
+    for (const contactUrl of priorityPages.slice(0, 3)) {
+      try {
+        // Navigate to the contact page
+        await page.goto(contactUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
         });
+
+        // Extract contact information
+        console.log(`Navigating to contact page: ${contactUrl}`);
+        const pageContacts = await extractCoachesGeneralStrategy(
+          page,
+          contactUrl
+        );
+        contacts.push(...pageContacts);
+      } catch (err) {
+        console.error(`Error navigating to contact page ${contactUrl}: ${err}`);
       }
     }
 
     return contacts;
-  } catch (error) {
-    console.error("Error generating contacts from team members:", error);
+  } catch (err) {
+    console.error(`Error finding contact pages: ${err}`);
     return contacts;
   }
 }
 
 /**
- * Remove duplicate contacts based on email address
+ * Process coach elements to extract contact information
+ */
+async function processCoachElements(page: Page): Promise<ScrapedContact[]> {
+  const contacts: ScrapedContact[] = [];
+
+  try {
+    // Detect common coach directory elements
+    const coachSelectors = [
+      // Specific coach elements
+      ".coach-item, .coach-card, .team-member, .staff-member, .faculty-member, .directory-entry",
+      // Common containers for coach listings
+      ".coaches-list, .staff-list, .team-list, .directory-list, .faculty-list",
+      // Grid or flex layouts commonly used for team directories
+      ".coach-grid, .staff-grid, .team-grid, .directory-grid",
+      // Common organizational sections
+      "section.coaches, section.staff, section.team, section.faculty, section.directory",
+      // Div elements with coach related classes
+      "div[class*='coach'], div[class*='staff'], div[class*='team'], div[class*='directory']",
+    ];
+
+    const coachElements = [];
+    for (const selector of coachSelectors) {
+      try {
+        const elements = await page.$$(selector);
+        if (elements.length > 0) {
+          coachElements.push(...elements);
+        }
+      } catch {
+        // Skip problematic selectors
+      }
+    }
+
+    console.log(`Found ${coachElements.length} coach elements`);
+
+    // Extract contact information from each coach element
+    for (const element of coachElements) {
+      try {
+        const text = (await element.textContent()) || "";
+        const emails = extractEmailsFromText(text);
+
+        // If direct emails found, use them
+        if (emails.length > 0) {
+          for (const email of emails) {
+            const name = getNameFromText(text);
+            const title = getTitleFromText(text);
+
+            contacts.push({
+              email,
+              name: name || "",
+              title: title || "",
+              url: page.url(),
+              confidence: "Confirmed",
+              source: "Coach element",
+            });
+          }
+        }
+        // Otherwise look for names and try to generate emails
+        else {
+          const name = getNameFromText(text);
+          const title = getTitleFromText(text);
+
+          if (name) {
+            const domain = extractDomain(page.url());
+            if (domain) {
+              const possibleEmails = generatePossibleEmails(name, domain);
+              for (const email of possibleEmails) {
+                contacts.push({
+                  email,
+                  name,
+                  title: title || "",
+                  url: page.url(),
+                  confidence: "Generated - Verification Required",
+                  source: "Coach element (generated)",
+                });
+              }
+            }
+          }
+        }
+      } catch {
+        // Skip problematic elements
+      }
+    }
+
+    return contacts;
+  } catch (err) {
+    console.error(`Error processing coach elements: ${err}`);
+    return contacts;
+  }
+}
+
+/**
+ * Check if two URLs are from the same domain
+ */
+function isSameDomain(url1: string, url2: string): boolean {
+  try {
+    const domain1 = new URL(url1).hostname;
+    const domain2 = new URL(url2).hostname;
+
+    // Consider subdomains of the same domain as the same domain
+    const baseDomain1 = domain1.split(".").slice(-2).join(".");
+    const baseDomain2 = domain2.split(".").slice(-2).join(".");
+
+    return baseDomain1 === baseDomain2;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a URL is a resource URL (image, CSS, JS, etc.)
+ */
+function isResourceUrl(url: string): boolean {
+  const resourceExtensions = [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".svg",
+    ".webp",
+    ".css",
+    ".js",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".zip",
+    ".mp4",
+    ".webm",
+    ".mp3",
+    ".wav",
+  ];
+
+  // Check file extensions
+  for (const ext of resourceExtensions) {
+    if (url.toLowerCase().endsWith(ext)) return true;
+  }
+
+  // Check for common resource patterns
+  const resourcePatterns = [
+    "/wp-content/uploads/",
+    "/images/",
+    "/assets/",
+    "/static/",
+    "/media/",
+    "/dist/",
+    "/build/",
+    "/css/",
+    "/js/",
+    "/fonts/",
+    "/api/",
+    "/wp-json/",
+    "cdn.",
+    "analytics.",
+    "tracking.",
+    "pixel.",
+    "adroll",
+    "doubleclick",
+    "facebook.com",
+    "google-analytics",
+    "googlesyndication",
+    "googletagmanager",
+    "clarity.ms",
+    "hotjar.com",
+    "snap.licdn.com",
+    "connect.facebook.net",
+    "script.js",
+    "styles.css",
+  ];
+
+  for (const pattern of resourcePatterns) {
+    if (url.toLowerCase().includes(pattern)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Prioritize contact pages by relevance
+ */
+function prioritizeContactPages(urls: string[]): string[] {
+  // Score each URL by relevance
+  const scoredUrls = urls.map((url) => {
+    let score = 0;
+    const lowerUrl = url.toLowerCase();
+
+    // Prioritize by URL path segments indicating contact pages
+    if (lowerUrl.includes("/contact")) score += 10;
+    if (lowerUrl.includes("/staff")) score += 8;
+    if (lowerUrl.includes("/team")) score += 7;
+    if (lowerUrl.includes("/coaches")) score += 9;
+    if (lowerUrl.includes("/faculty")) score += 6;
+    if (lowerUrl.includes("/directory")) score += 8;
+    if (lowerUrl.includes("/about-us")) score += 5;
+    if (lowerUrl.includes("/about")) score += 4;
+    if (lowerUrl.includes("/people")) score += 7;
+
+    // Penalize URLs that are likely not contact pages
+    if (lowerUrl.includes("/news")) score -= 3;
+    if (lowerUrl.includes("/blog")) score -= 3;
+    if (lowerUrl.includes("/products")) score -= 5;
+    if (lowerUrl.includes("/shop")) score -= 5;
+    if (lowerUrl.includes("/cart")) score -= 8;
+    if (lowerUrl.includes("/login")) score -= 8;
+    if (lowerUrl.includes("/register")) score -= 6;
+    if (lowerUrl.includes("/terms")) score -= 7;
+    if (lowerUrl.includes("/privacy")) score -= 7;
+
+    return { url, score };
+  });
+
+  // Sort by score (highest first)
+  scoredUrls.sort((a, b) => b.score - a.score);
+
+  // Return just the URLs in priority order
+  return scoredUrls.map((item) => item.url);
+}
+
+/**
+ * Remove duplicate contacts from results
  */
 function removeDuplicateContacts(contacts: ScrapedContact[]): ScrapedContact[] {
   const uniqueEmails = new Map<string, ScrapedContact>();
 
-  contacts.forEach((contact) => {
-    if (!contact.email) return;
+  // Process contacts in order, preferring confirmed over generated
+  for (const contact of contacts) {
+    const key = contact.email.toLowerCase();
 
-    const normalizedEmail = contact.email.toLowerCase().trim();
-
-    // If this email already exists, only replace it if the new contact has more info
-    // or a higher confidence level
-    const existing = uniqueEmails.get(normalizedEmail);
-
-    if (!existing) {
-      uniqueEmails.set(normalizedEmail, contact);
-    } else {
-      // Prioritize confirmed emails over generated ones
-      const existingIsConfirmed = existing.confidence === "Confirmed";
-      const newIsConfirmed = contact.confidence === "Confirmed";
-
-      if (
-        (newIsConfirmed && !existingIsConfirmed) ||
-        (!existing.name && contact.name) ||
-        (!existing.title && contact.title)
-      ) {
-        // Keep the contact with more information or higher confidence
-        uniqueEmails.set(normalizedEmail, {
-          ...existing,
-          name: contact.name || existing.name,
-          title: contact.title || existing.title,
-          confidence: newIsConfirmed ? "Confirmed" : existing.confidence,
-        });
-      }
+    // Always keep confirmed contacts
+    if (contact.confidence === "Confirmed") {
+      uniqueEmails.set(key, contact);
     }
-  });
+    // Keep generated contacts only if we don't already have a confirmed one
+    else if (
+      !uniqueEmails.has(key) ||
+      uniqueEmails.get(key)?.confidence !== "Confirmed"
+    ) {
+      uniqueEmails.set(key, contact);
+    }
+  }
 
   return Array.from(uniqueEmails.values());
 }
