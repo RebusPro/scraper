@@ -157,26 +157,194 @@ export class ImprovedPlaywrightScraper {
               await new Promise((resolve) => setTimeout(resolve, 2000));
             }
           }
-
-          // Determine if this is a coaching site (internal classification)
-          const isCoachDir = await this.detectCoachSite(page);
-          // Only log in advanced debugging mode
-          if (
-            process.env.NODE_ENV === "development" &&
-            process.env.DEBUG_SCRAPER
-          ) {
-            console.log(
-              `[Advanced Debug] Content classification: ${
-                isCoachDir ? "Coaching site" : "General site"
-              }`
+          // Check for obvious contact links if we're on the main page
+          const isMainPage = (url: string): boolean => {
+            const parsedUrl = new URL(url);
+            return (
+              parsedUrl.pathname === "/" ||
+              parsedUrl.pathname === "" ||
+              parsedUrl.pathname === "/index.html" ||
+              parsedUrl.pathname === "/index.php" ||
+              parsedUrl.pathname.endsWith("/home")
             );
+          };
+
+          if (isMainPage(currentUrl)) {
+            // Try to find and visit contact pages
+            try {
+              console.log("Looking for contact page links...");
+
+              // Look for contact page links
+              const contactLinks = await page.evaluate(() => {
+                const links: string[] = [];
+
+                // Common contact page selectors
+                const contactSelectors = [
+                  "a[href*='contact']",
+                  "a[href*='about-us']",
+                  "a[href*='about']",
+                  "a[href*='get-in-touch']",
+                ];
+
+                // Find all potential contact links
+                contactSelectors.forEach((selector) => {
+                  document.querySelectorAll(selector).forEach((link) => {
+                    const href = link.getAttribute("href");
+                    if (href) links.push(href);
+                  });
+                });
+
+                return [...new Set(links)]; // Remove duplicates
+              });
+
+              // Visit each contact page and extract emails
+              if (contactLinks.length > 0) {
+                console.log(
+                  `Found ${contactLinks.length} potential contact page links`
+                );
+
+                for (const link of contactLinks.slice(0, 2)) {
+                  // Limit to first 2 links for speed
+                  try {
+                    // Resolve relative URLs
+                    const absoluteUrl = new URL(link, currentUrl).href;
+
+                    // Skip if it's the current page
+                    if (absoluteUrl === currentUrl) continue;
+
+                    console.log(
+                      `Visiting potential contact page: ${absoluteUrl}`
+                    );
+
+                    // Visit the contact page
+                    await page.goto(absoluteUrl, {
+                      waitUntil: "domcontentloaded",
+                      timeout: 10000,
+                    });
+
+                    // Extract emails from this contact page
+                    const contactPageContent = await page.content();
+                    const contactEmails = extractEmails(contactPageContent);
+
+                    // Add to contacts
+                    const contactPageContacts = processContactData(
+                      contactEmails,
+                      contactPageContent,
+                      absoluteUrl
+                    );
+
+                    allContacts.push(...contactPageContacts);
+
+                    // Return to original page
+                    await page.goto(currentUrl, {
+                      waitUntil: "domcontentloaded",
+                      timeout: 10000,
+                    });
+                  } catch (error) {
+                    console.error(
+                      `Error exploring contact page ${link}:`,
+                      error
+                    );
+                  }
+                }
+              } else {
+                console.log("No contact page links found");
+              }
+            } catch (error) {
+              console.error("Error exploring contact pages:", error);
+            }
           }
 
-          if (isCoachDir) {
-            // Use specialized handling for coach directories
-            console.log("Using specialized coach directory handling");
+          // Extract emails using universal techniques that work on ANY website
+          // Extract emails using universal techniques that work on ANY website
+          console.log("Extracting emails from page content");
 
-            // Try specialized sports directory processing
+          // 1. Extract standard emails from page content
+          const content = await page.content();
+          const standardEmails = extractEmails(content);
+
+          // Process standard emails into contacts
+          const standardContacts = processContactData(
+            standardEmails,
+            content,
+            currentUrl
+          );
+          allContacts.push(...standardContacts);
+
+          // 2. Extract any obfuscated emails
+          const obfuscatedEmails = extractObfuscatedEmails(content);
+          allContacts.push(
+            ...obfuscatedEmails.map((email) => ({
+              email,
+              source: currentUrl,
+              confidence: "Confirmed" as const,
+            }))
+          );
+
+          // 3. Extract emails directly in the browser for better JS support
+          const browserEmails = await page.evaluate(() => {
+            // This runs in the browser context
+            const email_regex =
+              /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+            const html = document.documentElement.innerHTML;
+
+            // Look for emails in data attributes
+            const dataEmails: string[] = [];
+            document
+              .querySelectorAll("[data-email], [data-contact], [data-mail]")
+              .forEach((el) => {
+                const value =
+                  el.getAttribute("data-email") ||
+                  el.getAttribute("data-contact") ||
+                  el.getAttribute("data-mail");
+                if (value && value.includes("@")) dataEmails.push(value);
+              });
+
+            // Look for common organizational emails
+            const orgEmails: string[] = [];
+            if (html.includes("info@")) {
+              const matches =
+                html.match(/info@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+              orgEmails.push(...matches);
+            }
+            if (html.includes("contact@")) {
+              const matches =
+                html.match(/contact@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+              orgEmails.push(...matches);
+            }
+
+            return [
+              ...new Set([
+                ...(html.match(email_regex) || []),
+                ...dataEmails,
+                ...orgEmails,
+              ]),
+            ];
+          });
+
+          // Add browser-extracted emails
+          for (const email of browserEmails) {
+            if (
+              !allContacts.some((c) => c.email === email) &&
+              email.includes("@") &&
+              email.includes(".") &&
+              email.length > 5
+            ) {
+              allContacts.push({
+                email,
+                source: currentUrl,
+                confidence: "Confirmed",
+              });
+            }
+          }
+
+          // Apply specialized techniques as enhancement (but not requirement)
+          // These techniques can help extract more emails from certain types of sites
+          const isSportsRelated = await this.detectCoachSite(page);
+
+          if (isSportsRelated) {
+            // Optional sports-specific enhancements
+            console.log("Applying sports-specific enhancements");
             try {
               // Process as generic sports directory (no hardcoded URLs)
               console.log("Processing sports directory");

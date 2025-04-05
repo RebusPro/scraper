@@ -101,9 +101,12 @@ export default function SimplifiedScrapeSettingsSelector({
             Quick Scan
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Fast scanning
+            <span className="font-bold text-green-600 dark:text-green-400">
+              Ultra-fast
+            </span>{" "}
+            mode for any website with standard email formats
             <br />
-            Simple sites only
+            (completes in ~5 seconds)
           </div>
         </button>
 
@@ -120,9 +123,9 @@ export default function SimplifiedScrapeSettingsSelector({
             Standard
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Balanced approach
+            Balanced mode for any website type
             <br />
-            Works with most sites
+            Works with most content formats
           </div>
         </button>
 
@@ -139,9 +142,9 @@ export default function SimplifiedScrapeSettingsSelector({
             Thorough
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Deep scanning
+            Intensive mode for any complex websites
             <br />
-            For complex & dynamic sites
+            Handles dynamic content & obfuscated emails
           </div>
         </button>
       </div>
@@ -169,17 +172,20 @@ export default function SimplifiedScrapeSettingsSelector({
             <div className="mt-1 text-sm text-blue-700 dark:text-blue-400">
               {settingsMode === "aggressive" ? (
                 <p>
-                  For sites with dynamic content or hidden emails (like
-                  hockey.travelsports.com), use <strong>Thorough</strong> mode
-                  for best results.
+                  For websites with complex JavaScript, dynamic content, or
+                  hidden emails, use <strong>Thorough</strong> mode for best
+                  results.
                 </p>
               ) : settingsMode === "gentle" ? (
                 <p>
-                  Light mode works best for simple sites with easily visible
-                  contact information.
+                  <strong>Quick Scan</strong> mode works best for any site with
+                  standard, clearly visible contact information.
                 </p>
               ) : (
-                <p>Standard mode is recommended for most coaching websites.</p>
+                <p>
+                  <strong>Standard</strong> mode is recommended for most
+                  websites and will work across a wide range of content types.
+                </p>
               )}
             </div>
           </div>

@@ -20,6 +20,7 @@ const JS_EMAIL_PATTERNS = [
   /data-cfemail="([^"]+)"/g,
   /class="__cf_email__[^>]+data-cfemail="([^"]+)"/g,
   /\*protected email\*.*?([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g,
+  /mailto:([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g,
 ];
 
 // Common name patterns for extracting names near emails

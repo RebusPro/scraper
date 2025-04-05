@@ -335,11 +335,11 @@ export default function Home() {
         {/* Header section */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800 dark:text-white">
-            Coach Email Finder
+            Email Finder Pro
           </h1>
           <p className="text-gray-600 dark:text-gray-300 mt-2 max-w-2xl mx-auto">
-            Extract real coach emails, names, and positions from websites for
-            your marketing campaigns
+            Extract real emails, names, and positions from any website type for
+            your marketing campaigns and outreach
           </p>
 
           {/* Feature badges */}
