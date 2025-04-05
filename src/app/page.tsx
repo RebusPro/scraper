@@ -1,11 +1,12 @@
 /**
  * Main application page - Email Scraper for Marketing
+ * Enhanced for non-technical managers with improved user experience
  */
 "use client";
 
 import { useState } from "react";
 import { ScrapingResult } from "@/lib/scraper/types";
-import BatchUploader from "@/components/BatchUploader";
+import EnhancedBatchUploader from "@/components/EnhancedBatchUploader";
 import ResultsDisplay from "@/components/ResultsDisplay";
 import ScrapeProgressDisplay from "@/components/ScrapeProgressDisplay";
 import ScrapeSettingsSelector from "@/components/ScrapeSettingsSelector";
@@ -29,6 +30,7 @@ export default function Home() {
     browserType: "chromium" as "chromium" | "firefox",
     timeout: 30000,
   });
+  const [showFeatureInfo, setShowFeatureInfo] = useState(false);
 
   // Handle batch scraping from Excel/CSV file
   const handleBatchScrape = async (urlList: string[]) => {
@@ -71,36 +73,54 @@ export default function Home() {
         throw new Error("Failed to get response reader");
       }
 
+      // Buffer to accumulate data across chunks
+      let buffer = "";
+
       // Read the stream
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        // Process the chunk
-        const chunk = new TextDecoder().decode(value);
-        const result = JSON.parse(chunk);
+        // Decode the chunk and add to buffer
+        buffer += new TextDecoder().decode(value);
 
-        // Update the state with the results
-        if (result.results && result.results.length > 0) {
-          setResults(result.results);
-          setCurrentResult(result.results[0]);
-        }
+        try {
+          // Try to parse the JSON from the buffer
+          const result = JSON.parse(buffer);
+          // If successful, reset the buffer
+          buffer = "";
 
-        // Update errors
-        if (result.errors && result.errors.length > 0) {
-          setErrors(result.errors);
-        }
+          // Update the state with the results
+          if (result.results && result.results.length > 0) {
+            setResults(result.results);
+            setCurrentResult(result.results[0]);
+          }
 
-        // Update progress
-        setBatchProgress({
-          current: result.processed || 0,
-          total: result.total || urls.length,
-        });
+          // Update errors
+          if (result.errors && result.errors.length > 0) {
+            setErrors(result.errors);
+          }
 
-        // Mark as done
-        if (result.done) {
-          setIsScrapingBatch(false);
-          break;
+          // Update progress
+          setBatchProgress({
+            current: result.processed || 0,
+            total: result.total || urls.length,
+          });
+
+          // Mark as done
+          if (result.done) {
+            setIsScrapingBatch(false);
+            break;
+          }
+        } catch {
+          // If we can't parse the JSON yet, we might need more data
+          // Just continue to the next chunk
+          // But if we've accumulated too much data without a valid JSON, something's wrong
+          if (buffer.length > 100000) {
+            console.error("Buffer overflow, resetting");
+            buffer = "";
+            throw new Error("Failed to parse streaming response");
+          }
         }
       }
     } catch (error) {
@@ -154,9 +174,9 @@ export default function Home() {
       );
 
       if (format === "xlsx") {
-        await exportToExcel(allContacts, "email-scraping-results");
+        await exportToExcel(allContacts, "coaching-email-results");
       } else {
-        exportToCSV(allContacts, "email-scraping-results");
+        exportToCSV(allContacts, "coaching-email-results");
       }
     } catch (error) {
       console.error("Error exporting data:", error);
@@ -198,18 +218,235 @@ export default function Home() {
   return (
     <main className="flex min-h-screen flex-col p-6 bg-gray-50 dark:bg-gray-900">
       <div className="container mx-auto">
+        {/* Header section */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800 dark:text-white">
-            Coaching Email Extractor
+            Skating Coach Email Finder
           </h1>
-          <p className="text-gray-600 dark:text-gray-300 mt-2">
-            Extract coach emails, names, and titles from websites for your
-            marketing campaigns
+          <p className="text-gray-600 dark:text-gray-300 mt-2 max-w-2xl mx-auto">
+            Easily extract coach emails, names, and positions from websites for
+            your marketing campaigns — even from dynamic websites that other
+            tools can&apos;t handle
           </p>
-          <div className="inline-flex items-center px-3 py-1 mt-2 text-sm font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-            Enhanced Dynamic Content Support
+
+          {/* Feature badges */}
+          <div className="flex flex-wrap justify-center gap-2 mt-3">
+            <div className="inline-flex items-center px-3 py-1 text-sm font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 mr-1"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              Dynamic Content Support
+            </div>
+            <div className="inline-flex items-center px-3 py-1 text-sm font-medium rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 mr-1"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              Excel Import/Export
+            </div>
+            <div className="inline-flex items-center px-3 py-1 text-sm font-medium rounded-full bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 mr-1"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+              </svg>
+              Name & Title Extraction
+            </div>
+            <button
+              onClick={() => setShowFeatureInfo(!showFeatureInfo)}
+              className="inline-flex items-center px-3 py-1 text-sm font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 mr-1"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              How it works
+            </button>
           </div>
         </div>
+
+        {/* Feature Info section - collapsible */}
+        {showFeatureInfo && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6 animate-fadeIn">
+            <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-3">
+              How Our Coach Email Finder Works
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-5 w-5 text-indigo-500">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
+                    <span className="font-medium text-gray-800 dark:text-white">
+                      Dynamic Content Processing:
+                    </span>{" "}
+                    Extracts data from modern, JavaScript-heavy websites that
+                    traditional scrapers can&apos;t handle
+                  </p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-5 w-5 text-indigo-500">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
+                    <span className="font-medium text-gray-800 dark:text-white">
+                      Bulk Processing:
+                    </span>{" "}
+                    Upload an Excel sheet with multiple websites to process them
+                    all at once
+                  </p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-5 w-5 text-indigo-500">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
+                    <span className="font-medium text-gray-800 dark:text-white">
+                      Contextual Data:
+                    </span>{" "}
+                    Extracts not just emails but also names and positions/titles
+                    when available
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-5 w-5 text-indigo-500">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
+                    <span className="font-medium text-gray-800 dark:text-white">
+                      Specialized for Coach Directories:
+                    </span>{" "}
+                    Our tool is optimized for coach directories and
+                    sports-related websites
+                  </p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-5 w-5 text-indigo-500">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
+                    <span className="font-medium text-gray-800 dark:text-white">
+                      Intelligent Navigation:
+                    </span>{" "}
+                    Automatically explores staff and contact pages to find
+                    maximum information
+                  </p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-5 w-5 text-indigo-500">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <p className="ml-2 text-sm text-gray-600 dark:text-gray-300">
+                    <span className="font-medium text-gray-800 dark:text-white">
+                      Export Options:
+                    </span>{" "}
+                    Download your results as Excel or CSV for easy import into
+                    your marketing tools
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900/30 rounded-md">
+              <p className="text-sm text-yellow-700 dark:text-yellow-400">
+                <strong>Tip:</strong> For best results with sites like
+                hockey.travelsports.com, use the &ldquo;Aggressive&rdquo;
+                scanning mode in the settings below. This enables our advanced
+                dynamic content processing.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Main content area */}
         <div className="space-y-6">
@@ -220,24 +457,26 @@ export default function Home() {
                 Upload Your Website List
               </h2>
               <p className="text-sm text-gray-600 dark:text-gray-300">
-                Upload an Excel or CSV file with coaching websites to scrape.
-                Our advanced system will automatically extract all available
-                contact information.
+                Upload an Excel file with coaching websites to scrape or paste
+                URLs directly. Our advanced system will automatically extract
+                all available contact information.
               </p>
             </div>
 
             {/* Scrape settings selector */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6 mt-6">
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 mb-6 mt-6">
               <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
                 Configure Scraping Settings
               </h2>
               <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                Choose how thoroughly to scan websites for contact information.
+                Choose how thoroughly to scan websites for coach information.
+                Use &ldquo;Aggressive&rdquo; mode for dynamic sites like
+                hockey.travelsports.com.
               </p>
               <ScrapeSettingsSelector onSettingsChange={setScrapeSettings} />
             </div>
 
-            <BatchUploader
+            <EnhancedBatchUploader
               onBatchScrape={handleBatchScrape}
               isLoading={isScrapingBatch}
             />

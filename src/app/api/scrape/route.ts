@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PlaywrightScraper } from "@/lib/scraper/playwrightScraper";
+import { ImprovedPlaywrightScraper } from "@/lib/scraper/improvedPlaywrightScraper";
 import { ScrapedContact, ScrapingResult } from "@/lib/scraper/types";
 
 // Define a settings input type
@@ -16,7 +17,7 @@ type ScraperSettingsInput = {
 const activeScrapingSessions: Map<
   string,
   {
-    scraper: PlaywrightScraper;
+    scraper: PlaywrightScraper | ImprovedPlaywrightScraper;
     cancelled: boolean;
   }
 > = new Map();
@@ -90,7 +91,8 @@ export async function POST(request: NextRequest) {
 
     // Create a new session
     const sessionId = generateSessionId();
-    const scraper = new PlaywrightScraper();
+    // Always use the improved scraper with our enhancements
+    const scraper = new ImprovedPlaywrightScraper();
 
     // Register the session
     activeScrapingSessions.set(sessionId, {
@@ -135,15 +137,18 @@ async function processScraping(
   const results: ScrapingResult[] = [];
   const errors: { url: string; error: string }[] = [];
   const processedUrls: string[] = [];
+  const encoder = new TextEncoder();
 
   // Get the session
   const session = activeScrapingSessions.get(sessionId);
   if (!session) {
     await writer.write(
-      JSON.stringify({
-        done: true,
-        error: "Session not found",
-      })
+      encoder.encode(
+        JSON.stringify({
+          done: true,
+          error: "Session not found",
+        })
+      )
     );
     await writer.close();
     return;
@@ -153,14 +158,16 @@ async function processScraping(
 
   // Send initial update
   await writer.write(
-    JSON.stringify({
-      done: false,
-      processed: 0,
-      total: urls.length,
-      results: [],
-      errors: [],
-      remainingUrls: [...urls],
-    })
+    encoder.encode(
+      JSON.stringify({
+        done: false,
+        processed: 0,
+        total: urls.length,
+        results: [],
+        errors: [],
+        remainingUrls: [...urls],
+      })
+    )
   );
 
   // Process each URL
@@ -175,7 +182,7 @@ async function processScraping(
     const remainingUrls = urls.slice(i);
 
     try {
-      console.log(`Using Playwright for ${url}`);
+      console.log(`Processing URL: ${url}`);
 
       // Apply user-provided settings with fallbacks for each value
       let maxDepth = 2;
@@ -183,12 +190,19 @@ async function processScraping(
       let timeout = 30000;
       let browserType: "chromium" | "firefox" = "chromium";
       let includePhoneNumbers = true;
+      let useHeadless = true;
 
       // Apply settings based on mode if specified
       if (settings.mode === "aggressive") {
         console.log("Using aggressive mode settings");
         maxDepth = 3;
-        timeout = 45000;
+        timeout = 60000; // Increased timeout for dynamic sites
+
+        // Aggressive mode might need to use headed browser for some sites
+        if (url.includes("travelsports.com") || url.includes("dynamic")) {
+          console.log("Using headed browser for dynamic content site");
+          useHeadless = false;
+        }
       } else if (settings.mode === "gentle") {
         console.log("Using gentle mode settings");
         maxDepth = 1;
@@ -210,14 +224,14 @@ async function processScraping(
       console.log(
         `Using settings: mode=${
           settings.mode || "standard"
-        }, maxDepth=${maxDepth}, followLinks=${followLinks}, timeout=${timeout}ms, browser=${browserType}`
+        }, maxDepth=${maxDepth}, followLinks=${followLinks}, timeout=${timeout}ms, browser=${browserType}, headless=${useHeadless}`
       );
 
       const contacts: ScrapedContact[] = await scraper.scrapeWebsite(url, {
         maxDepth,
         followLinks,
         includePhoneNumbers,
-        useHeadless: true,
+        useHeadless,
         timeout,
         browserType,
       });
@@ -228,6 +242,11 @@ async function processScraping(
         contacts: contacts || [],
         timestamp: new Date().toISOString(),
         status: "success",
+        stats: {
+          totalEmails: contacts.length,
+          totalWithNames: contacts.filter((c) => !!c.name).length,
+          pagesScraped: 1, // This would be better if tracked during scraping
+        },
       };
 
       results.push(result);
@@ -251,16 +270,18 @@ async function processScraping(
       processedUrls.push(url);
     }
 
-    // Update progress
+    // Update progress - use proper encoding to ensure valid JSON
     await writer.write(
-      JSON.stringify({
-        done: false,
-        processed: processedUrls.length,
-        total: urls.length,
-        results,
-        errors,
-        remainingUrls,
-      })
+      encoder.encode(
+        JSON.stringify({
+          done: false,
+          processed: processedUrls.length,
+          total: urls.length,
+          results,
+          errors,
+          remainingUrls,
+        })
+      )
     );
   }
 
@@ -284,20 +305,22 @@ async function processScraping(
     .map((r) => r.url);
 
   await writer.write(
-    JSON.stringify({
-      done: true,
-      processed: processedUrls.length,
-      total: urls.length,
-      results: finalResults,
-      errors: [
-        ...errors,
-        ...noResultsUrls.map((url) => ({
-          url,
-          error: "No contact information found on this website",
-        })),
-      ],
-      remainingUrls: [],
-    })
+    encoder.encode(
+      JSON.stringify({
+        done: true,
+        processed: processedUrls.length,
+        total: urls.length,
+        results: finalResults,
+        errors: [
+          ...errors,
+          ...noResultsUrls.map((url) => ({
+            url,
+            error: "No contact information found on this website",
+          })),
+        ],
+        remainingUrls: [],
+      })
+    )
   );
 
   await writer.close();
