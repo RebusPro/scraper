@@ -62,7 +62,10 @@ export class ImprovedPlaywrightScraper {
 
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
-    const pendingUrls: { url: string; depth: number }[] = [{ url, depth: 0 }];
+    // Add priority to pendingUrls type definition
+    const pendingUrls: { url: string; depth: number; priority?: number }[] = [
+      { url, depth: 0, priority: 0 },
+    ];
     let pagesVisited = 0; // Track how many pages we've visited
 
     try {
@@ -404,31 +407,112 @@ export class ImprovedPlaywrightScraper {
                   fullUrl = `${urlObj.origin}${pathWithoutFile}/${link}`;
                 }
 
-                // Prioritize "contact" and "about" pages
+                // Prioritize "contact" and related pages with more detailed priority levels
                 const lowerPath = new URL(fullUrl).pathname.toLowerCase();
-                const isContactPage =
+
+                // Determine contact page priority (higher number = higher priority)
+                let priority = 0;
+
+                // Contact pages - highest priority
+                if (
                   lowerPath.includes("contact") ||
+                  lowerPath.includes("kontakt") || // German
+                  lowerPath.includes("contacto") || // Spanish
+                  lowerPath.includes("get-in-touch") ||
+                  lowerPath === "/contact" ||
+                  lowerPath === "/contact-us" ||
+                  lowerPath.endsWith("/contact") ||
+                  lowerPath.endsWith("/contact-us")
+                ) {
+                  priority = 3; // Highest priority
+                }
+                // About/team/staff pages - second priority
+                else if (
                   lowerPath.includes("about") ||
-                  lowerPath.includes("people") ||
                   lowerPath.includes("team") ||
-                  lowerPath.includes("staff");
+                  lowerPath.includes("staff") ||
+                  lowerPath.includes("people") ||
+                  lowerPath === "/about" ||
+                  lowerPath === "/about-us" ||
+                  lowerPath.endsWith("/about") ||
+                  lowerPath.endsWith("/about-us")
+                ) {
+                  priority = 2;
+                }
+                // Support and help pages - third priority
+                else if (
+                  lowerPath.includes("support") ||
+                  lowerPath.includes("help") ||
+                  lowerPath.includes("faq") ||
+                  lowerPath.includes("connect")
+                ) {
+                  priority = 1;
+                }
+
+                // The priority value determines processing order (no need for a separate isContactPage variable)
 
                 const sameDomain =
                   new URL(fullUrl).hostname === new URL(currentUrl).hostname;
 
                 // Only follow links from the same domain
                 if (sameDomain && !visitedUrls.has(fullUrl)) {
-                  if (isContactPage) {
-                    // Prioritize contact pages by adding them to the front
+                  // Add pages to queue based on priority
+                  if (priority === 3) {
+                    // Contact pages - add to very front of queue (highest priority)
+                    console.log(
+                      `Adding contact page with highest priority: ${fullUrl}`
+                    );
                     pendingUrls.unshift({
                       url: fullUrl,
                       depth: depth + 1,
                     });
+                  } else if (priority === 2) {
+                    // About/Team pages - add just after any highest priority pages
+                    console.log(
+                      `Adding about/team page with high priority: ${fullUrl}`
+                    );
+
+                    // Find position after all priority 3 pages
+                    let insertPosition = 0;
+                    while (
+                      insertPosition < pendingUrls.length &&
+                      pendingUrls[insertPosition].priority === 3
+                    ) {
+                      insertPosition++;
+                    }
+
+                    pendingUrls.splice(insertPosition, 0, {
+                      url: fullUrl,
+                      depth: depth + 1,
+                      priority: 2, // Store priority for future reference
+                    });
+                  } else if (priority === 1) {
+                    // Support pages - medium priority
+                    console.log(
+                      `Adding support page with medium priority: ${fullUrl}`
+                    );
+
+                    // Find position after all priority 3 and 2 pages
+                    let insertPosition = 0;
+                    while (
+                      insertPosition < pendingUrls.length &&
+                      (pendingUrls[insertPosition].priority === 3 ||
+                        pendingUrls[insertPosition].priority === 2)
+                    ) {
+                      insertPosition++;
+                    }
+
+                    pendingUrls.splice(insertPosition, 0, {
+                      url: fullUrl,
+                      depth: depth + 1,
+                      priority: 1, // Store priority for future reference
+                    });
                   } else {
-                    // Add other links to the end of the queue
+                    // Regular pages - lowest priority
                     pendingUrls.push({
                       url: fullUrl,
                       depth: depth + 1,
+                      priority: 0, // Store priority for future reference
                     });
                   }
                 }
