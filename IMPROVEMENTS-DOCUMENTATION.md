@@ -1,117 +1,244 @@
-# Email Scraper Improvements Documentation
+# Enhanced Email Scraper: Technical Documentation
 
-## Issues Addressed
+## System Architecture Overview
 
-Based on user feedback, we've identified and fixed several key issues with the email scraper:
+The enhanced email scraper is a sophisticated multi-mode web scraping system optimized for extracting email addresses and contact information from coaching and sports websites. It employs a three-tiered approach with multiple filtering layers to ensure high-quality results while respecting website structures.
 
-1. **False Positives in Email Detection**
+## Core Components
 
-   - System was recognizing PNG filenames as emails (e.g., `40x40_claim_your_page_v2@2x.yji-bd2968af3654281a8794.png`)
-   - UI text like "Reset password link" was being detected as email content
-   - Placeholder text like `${email}` was being captured
+### 1. Scraping Engine
 
-2. **Missing Emails on Specific Pages**
+- **Browser Automation**: Built on Playwright for headless/headed browser orchestration
+- **Page Processing**: Handles navigation, content extraction, and HTML parsing
+- **Link Discovery**: Prioritizes contact-related pages through intelligent URL queue management
+- **Error Handling**: Implements retry logic, graceful timeouts, and session recovery
 
-   - Some sites like `championsskatingcenter.com/coaches` had emails that weren't being detected
-   - Contact pages like `rays-rentals.com/contact-us/` had visible emails not being extracted
+### 2. Contact Extraction Pipeline
 
-3. **Incomplete Contact Information**
+- **Pattern Recognition**: Uses regex-based extraction with context-awareness
+- **Multi-pass Scanning**: Employs multiple extraction techniques per page
+- **False Positive Filtering**: Three-layer filtering system to eliminate non-email data
+- **Contact Correlation**: Associates names and titles with extracted emails
 
-   - Names were not being properly associated with emails
-   - Titles/positions were found but not always linked correctly to the right person
-   - Example: `jshaffer@therinks.com` was correctly matched with "Coordinator" title but missed the "Jacqie Shaffer" name
+### 3. Cancellation Mechanism
 
-4. **Dynamic Content Handling Issues**
-   - Pages with highly dynamic JavaScript content weren't being properly scraped
-   - No special handling for coach directories which often have unique structures
+- **Clean Shutdown**: Gracefully terminates processes without losing data
+- **Resource Management**: Properly closes browser instances and connections
+- **Partial Results Return**: Returns valid results even when terminated early
 
-## Solutions Implemented
+## Mode Specifications
 
-### 1. Enhanced Email Pattern Detection
+### Standard Mode
 
-We've significantly improved the email extraction logic to:
+**Technical Parameters:**
 
-- **Filter out false positives**
+- **Maximum Pages**: 5 pages per website
+- **Crawl Depth**: 1 (main page + direct links)
+- **Priority System**: Contact pages > About pages > Other pages
+- **Browser Settings**: Headless Chromium, 15-second timeout
+- **Resource Handling**: Blocks CSS/images/fonts for speed
+- **Link Following**: Enabled, but limited to same domain
 
-  - Added negative lookahead to exclude image filenames (`.png`, `.jpg`, etc.)
-  - Implemented checks for UI text patterns (like "password@", "email@", etc.)
-  - Added validation to skip placeholder text patterns like `${email}`
+**Best Use Cases:**
 
-- **Expanded detection patterns**
-  - Improved the name extraction with multiple pattern strategies
-  - Added support for different name-email association formats
+- Medium-sized coaching websites (5-20 pages)
+- Sites with standard navigation structures
+- When you need a balance of speed and thoroughness
+- For batch processing multiple sites (10-50) in reasonable time
 
-### 2. Improved Playwright Scraper for Dynamic Content
+**Technical Implementation Details:**
 
-- **Added special handling for coach directories**
+- Uses a breadth-first crawling strategy with priority queue
+- Employs standard browser timeout settings (15s)
+- Follows same-origin links only
+- Pages are visited in priority order based on keyword matching
 
-  - Implemented site-type detection for hockey and skating sites
-  - Added specific interaction patterns for common coach directory layouts
+### Aggressive Mode
 
-- **Enhanced dynamic content interaction**
+**Technical Parameters:**
 
-  - Added support for shadow DOM and iframe content extraction
-  - Implemented clicks on "load more" buttons and pagination
-  - Added hover event simulation to reveal hidden emails
+- **Maximum Pages**: 10 pages per website
+- **Crawl Depth**: 2 (follows links from contact pages)
+- **Priority System**: Enhanced with 3-tier priority weighting
+- **Browser Settings**: Uses headed browser for JavaScript-heavy sites
+- **Resource Handling**: Selectively loads resources based on page type
+- **Link Following**: Enabled with increased timeout (30s)
 
-- **Special handling for Travel Sports site**
-  - Added targeted handler for hockey.travelsports.com
-  - Implemented interaction with filter dropdowns
-  - Added support for visiting individual coach profile pages
+**Best Use Cases:**
 
-### 3. Better Name and Title Extraction
+- Complex websites with dynamic content (like hockey.travelsports.com)
+- Sites with hidden contact information
+- For high-priority websites where maximum data extraction is needed
+- When dealing with JavaScript-rendered content
 
-- **Expanded pattern recognition**
+**Technical Implementation Details:**
 
-  - Added multiple name pattern strategies (dash format, colon format, etc.)
-  - Extended context window for better name-email associations
-  - Added support for names in brackets/parentheses
+- Dynamically detects JavaScript-heavy sites and switches to headed browser
+- Implements scrolling behavior to trigger lazy-loaded content
+- Uses more aggressive timeouts for complex operations
+- Follows nested links based on relevance scoring
+- Applies heavier processing for contact pages
 
-- **Title extraction enhancements**
-  - Added more title patterns specific to coaching positions
-  - Improved recognition of common title formats (e.g., "Name - Title")
-  - Better handling of titles when they appear before names
+### Gentle Mode
 
-### 4. User Interface Improvements
+**Technical Parameters:**
 
-- **Added URL text input option**
-  - Users can now paste URLs directly as an alternative to file upload
-  - Added support for different input formats (newline-separated, comma-separated)
-  - Implemented automatic URL normalization
+- **Maximum Pages**: 1 page per website
+- **Crawl Depth**: 0 (scans only the provided URL)
+- **Priority System**: N/A (no link following)
+- **Browser Settings**: Headless Chromium, 5-second timeout
+- **Resource Handling**: Blocks all non-essential resources
+- **Link Following**: Disabled
 
-## Usage Instructions
+**Best Use Cases:**
 
-### File Upload Method
+- Very simple landing pages or contact pages
+- When processing hundreds of URLs quickly
+- As a first-pass scan to identify promising sites
+- For initial dataset exploration or validation
 
-1. Prepare an Excel or CSV file with website URLs in any column
-2. Click "Upload Excel/CSV" tab
-3. Drag & drop your file or use the Browse button
-4. The system will automatically detect URLs from any column
-5. Click "Start Scraping" to begin extraction
+**Technical Implementation Details:**
 
-### Text Input Method
+- Single-page scan with minimal network requests
+- Uses aggressive resource blocking for maximum speed
+- Implements shortened timeouts (5s)
+- Employs only basic email extraction techniques
+- Optimized for minimum server load and maximum throughput
 
-1. Click the "Paste URLs" tab
-2. Enter each URL on a new line or separate them with commas
-3. Click "Process URLs" to validate and prepare them
-4. Click "Start Scraping" to begin extraction
+## Advanced Feature Details
 
-### Results and Export
+### Contact Page Prioritization
 
-1. Track progress with the real-time progress display
-2. View extracted emails, names, and titles in the results table
-3. Use search and filtering options to find specific contacts
-4. Export results in Excel or CSV format
+The system implements a sophisticated page prioritization system:
 
-## Test Cases
+```javascript
+// Priority levels (higher number = higher priority)
+priority = 3; // Contact pages (highest)
+priority = 2; // About/team pages
+priority = 1; // Support/help pages
+priority = 0; // Regular pages (lowest)
+```
 
-The following URLs can be used to verify the improved functionality:
+Pages are queued based on their priority level, ensuring that the most promising pages are processed first. This significantly improves the chances of finding contact information early in the scraping process.
 
-1. `https://hockey.travelsports.com/coaches` - Dynamic content with coach listings
-2. `https://www.championsskatingcenter.com/coaches` - Site with coach emails
-3. `https://rays-rentals.com/contact-us/` - Contact page with multiple emails
-4. `https://www.greatparkice.com/general-info/contact-us/` - Page with emails and titles
+### GPS Coordinate Filtering (Triple-Layer)
 
-## Conclusion
+To prevent GPS coordinates from being mistakenly identified as emails, the system implements three layers of filtering:
 
-The enhanced email scraper now provides more accurate and comprehensive contact information extraction, with special handling for challenging sites and improved user experience for non-technical users.
+1. **Initial Extraction Filter**:
+
+   ```javascript
+   // Filter out GPS coordinates during initial extraction
+   if (
+     email.startsWith("/@") ||
+     /\/@\d+\.\d+/.test(email) ||
+     /^@\d+\.\d+/.test(email)
+   )
+     return false;
+   ```
+
+2. **Deduplication Filter**:
+
+   ```javascript
+   // During email normalization and deduplication
+   if (cleanedEmail.match(/^\/?\@[0-9\.\-]+$/)) return; // Skip this GPS coordinate
+   ```
+
+3. **Final Output Filter**:
+   ```javascript
+   // Final filtering before returning results
+   filteredContacts = this.applyFinalFiltering(contacts);
+   ```
+
+### Dynamic Mode Adjustments
+
+The system automatically adjusts settings based on the URL being processed:
+
+```javascript
+const dynamicSitePatterns = [
+  "travelsports.com",
+  "hockey",
+  "sports",
+  "coaches",
+  "directory",
+];
+
+const needsHeadlessFalse = dynamicSitePatterns.some((pattern) =>
+  url.toLowerCase().includes(pattern)
+);
+
+if (needsHeadlessFalse) {
+  useHeadless = false; // Switch to headed browser for dynamic content
+}
+```
+
+## Performance Optimization
+
+### Resource Handling
+
+To improve scraping performance, the system selectively blocks resource types:
+
+```javascript
+// Disable resource loading for speed
+await context.route(
+  "**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,otf}",
+  (route) => route.abort()
+);
+```
+
+### Intelligent Timeouts
+
+Timeouts are optimized based on the mode and operation:
+
+- **Navigation Timeout**: Varies by mode (5s, 15s, 30s)
+- **Wait Timeout**: Reduced for DOM stabilization (5s max)
+- **Network Idle**: Set to shorter thresholds for improved performance
+
+## Usage Recommendations
+
+### For Small Batches (1-10 websites)
+
+- Use **Aggressive Mode** for maximum data extraction
+- Expect approximately 30-60 seconds per website
+- Best for targeted marketing campaigns or high-value coach lists
+
+### For Medium Batches (10-50 websites)
+
+- Use **Standard Mode** for balanced performance
+- Expect approximately 10-30 seconds per website
+- Suitable for regional marketing campaigns or specific sports
+
+### For Large Batches (50+ websites)
+
+- Use **Gentle Mode** for initial scanning
+- Switch to **Standard Mode** for promising results
+- Expect 3-10 seconds per website in Gentle Mode
+- Ideal for initial market exploration or database building
+
+### For Technical Sites with Dynamic Content
+
+- Force **Aggressive Mode** with headed browser
+- Consider using specific URL patterns that directly target contact pages
+- Add additional time buffer for complex JavaScript rendering
+
+## Error Handling and Resilience
+
+The system implements multiple error handling strategies:
+
+1. **Navigation Retry Logic**: Automatically retries failed navigations
+2. **Context Isolation**: Each website is processed in an isolated context
+3. **Graceful Degradation**: Falls back to simpler extraction if complex methods fail
+4. **Memory Management**: Closes unused browser contexts to prevent memory leaks
+5. **Cancellation Handling**: Properly terminates operations when cancelled
+
+## Best Practices
+
+1. **URL Quality**: Provide the most specific URLs possible (e.g., homepage or contact page)
+2. **Batch Sizing**: Process websites in reasonable batch sizes (20-50 max)
+3. **Mode Selection**: Match mode to website complexity and importance
+4. **Time Management**: For large datasets, start with Gentle mode then upgrade
+5. **Cancellation**: Use the Stop button when needed - results up to that point will be preserved
+
+## Implementation Note
+
+The enhanced system handles both standard websites and complex dynamic sites, but specialized sites may require configuration adjustments. The multi-layer filtering system ensures high-quality results with minimal false positives.

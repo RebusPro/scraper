@@ -338,8 +338,7 @@ export default function Home() {
             Email Finder Pro
           </h1>
           <p className="text-gray-600 dark:text-gray-300 mt-2 max-w-2xl mx-auto">
-            Extract real emails, names, and positions from any website type for
-            your marketing campaigns and outreach
+            Extract real emails, names, and positions from any website type
           </p>
 
           {/* Feature badges */}
@@ -410,7 +409,7 @@ export default function Home() {
         {showFeatureInfo && (
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6 animate-fadeIn">
             <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-3">
-              How Our Coach Email Finder Works
+              How Our Email Finder Works
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
@@ -432,8 +431,7 @@ export default function Home() {
                     <span className="font-medium text-gray-800 dark:text-white">
                       Finds Real Emails Only:
                     </span>{" "}
-                    No guessing or generating email addresses - we extract only
-                    real contact information
+                    we extract only real contact information
                   </p>
                 </div>
                 <div className="flex items-start">
@@ -500,8 +498,7 @@ export default function Home() {
                     <span className="font-medium text-gray-800 dark:text-white">
                       Dynamic Content Handling:
                     </span>{" "}
-                    Special processing for sites like hockey.travelsports.com
-                    that load content dynamically
+                    Special processing for sites that load content dynamically
                   </p>
                 </div>
                 <div className="flex items-start">
@@ -544,17 +541,15 @@ export default function Home() {
                     <span className="font-medium text-gray-800 dark:text-white">
                       Export Options:
                     </span>{" "}
-                    Download your results as Excel or CSV for easy import into
-                    your marketing tools
+                    Download your results as Excel or CSV
                   </p>
                 </div>
               </div>
             </div>
             <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900/30 rounded-md">
               <p className="text-sm text-yellow-700 dark:text-yellow-400">
-                <strong>Tip:</strong> For best results with sites like
-                hockey.travelsports.com, use the &ldquo;Thorough&rdquo; scanning
-                mode in the settings below.
+                <strong>Tip:</strong> For best results, use the
+                &ldquo;Thorough&rdquo; scanning mode in the settings below.
               </p>
             </div>
           </div>

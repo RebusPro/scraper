@@ -560,6 +560,22 @@ export class ImprovedPlaywrightScraper {
             return; // Skip this email
           }
 
+          // Filter out GPS coordinates with multiple patterns
+          if (
+            cleanedEmail.startsWith("/@") ||
+            cleanedEmail.startsWith("@") ||
+            /^\/?@\d+\.\d+/.test(cleanedEmail) ||
+            /\/@\d+\.\d+/.test(cleanedEmail) ||
+            /^@-?\d+\.\d+/.test(cleanedEmail) ||
+            /^@\d+\.\d+/.test(cleanedEmail) ||
+            cleanedEmail.match(/^\/?\@[0-9\.\-]+$/)
+          ) {
+            console.log(
+              `Filtering out GPS coordinate during deduplication: ${cleanedEmail}`
+            );
+            return; // Skip this GPS coordinate
+          }
+
           // Add if not already present
           if (!uniqueEmails.has(cleanedEmail)) {
             const cleanedContact = { ...contact, email: cleanedEmail };
@@ -996,6 +1012,35 @@ export class ImprovedPlaywrightScraper {
     }
 
     console.log(`Fast extraction complete: found ${contacts.length} contacts`);
-    return contacts;
+    // Apply final filtering to remove any GPS coordinates that might have slipped through
+    const filteredContacts = this.applyFinalFiltering(contacts);
+    console.log(
+      `After final filtering: returning ${filteredContacts.length} contacts`
+    );
+    return filteredContacts;
+  }
+
+  // Final filter to ensure no GPS coordinates or other unwanted patterns get through
+  private applyFinalFiltering(contacts: ScrapedContact[]): ScrapedContact[] {
+    return contacts.filter((contact) => {
+      const email = contact.email;
+      if (!email) return false;
+
+      // Filter out GPS coordinate patterns with very strict checks
+      if (
+        email.startsWith("/@") ||
+        email.startsWith("@") ||
+        /^\/?@\d+\.\d+/.test(email) ||
+        /\/@\d+\.\d+/.test(email) ||
+        /^@-?\d+\.\d+/.test(email) ||
+        /^@\d+\.\d+/.test(email) ||
+        email.match(/^\/?\@[0-9\.\-]+$/) // Matches GPS coordinates like /@33.979584
+      ) {
+        console.log(`Filtering out GPS coordinate: ${email}`);
+        return false;
+      }
+
+      return true;
+    });
   }
 }

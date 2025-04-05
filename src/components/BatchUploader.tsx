@@ -220,7 +220,8 @@ export default function BatchUploader({
           string.startsWith("www.") ||
           /^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}/.test(string)) // domain-like pattern
       );
-    } catch (_) {
+    } catch (error) {
+      console.error("Error validating URL:", error);
       return false;
     }
   };
