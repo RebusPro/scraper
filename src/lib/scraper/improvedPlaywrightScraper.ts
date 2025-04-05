@@ -178,12 +178,37 @@ export class ImprovedPlaywrightScraper {
               const contactLinks = await page.evaluate(() => {
                 const links: string[] = [];
 
-                // Common contact page selectors
+                // Common contact page selectors - expanded to catch more variations
                 const contactSelectors = [
+                  // Direct contact page links
                   "a[href*='contact']",
+                  "a[href*='kontakt']", // German
+                  "a[href*='contacto']", // Spanish
+                  "a[href*='get-in-touch']",
+                  "a[href*='reach-us']",
+                  "a[href*='connect']",
+                  "a[href*='email']",
+                  "a[href*='mail']",
+                  // About pages that often contain contact info
                   "a[href*='about-us']",
                   "a[href*='about']",
-                  "a[href*='get-in-touch']",
+                  "a[href*='team']",
+                  "a[href*='staff']",
+                  "a[href*='people']",
+                  "a[href*='join']",
+                  // Common specific paths
+                  "a[href='/contact']",
+                  "a[href='/contact-us']",
+                  "a[href='/about']",
+                  "a[href='/about-us']",
+                  "a[href='/team']",
+                  // Menu items that may contain contact links
+                  ".menu a[href*='contact']",
+                  ".navigation a[href*='contact']",
+                  ".nav a[href*='contact']",
+                  "nav a[href*='contact']",
+                  "header a[href*='contact']",
+                  "footer a[href*='contact']",
                 ];
 
                 // Find all potential contact links
@@ -222,16 +247,59 @@ export class ImprovedPlaywrightScraper {
                       timeout: 10000,
                     });
 
-                    // Extract emails from this contact page
+                    // Wait a bit longer for contact pages to load
+                    await page.waitForTimeout(1000);
+
+                    // Look specifically for mailto: links which are common on contact pages
+                    const mailtoLinks = await page.evaluate(() => {
+                      const links: string[] = [];
+                      document
+                        .querySelectorAll("a[href^='mailto:']")
+                        .forEach((link) => {
+                          const href = link.getAttribute("href");
+                          if (href && href.startsWith("mailto:")) {
+                            links.push(href.substring(7)); // Remove 'mailto:' prefix
+                          }
+                        });
+                      return links;
+                    });
+
+                    console.log(
+                      `Found ${mailtoLinks.length} mailto: links on contact page`
+                    );
+
+                    // Add mailto: emails directly as high-confidence contacts
+                    for (const email of mailtoLinks) {
+                      if (
+                        email &&
+                        email.includes("@") &&
+                        !allContacts.some((c) => c.email === email)
+                      ) {
+                        allContacts.push({
+                          email,
+                          source: absoluteUrl,
+                          confidence: "Confirmed",
+                          method: "Contact Page Mailto Link",
+                        });
+                      }
+                    }
+
+                    // Also do regular extraction
                     const contactPageContent = await page.content();
                     const contactEmails = extractEmails(contactPageContent);
 
-                    // Add to contacts
+                    // Add to contacts with higher confidence since they're from a contact page
                     const contactPageContacts = processContactData(
                       contactEmails,
                       contactPageContent,
                       absoluteUrl
                     );
+
+                    // Mark these as coming from contact page for higher confidence
+                    contactPageContacts.forEach((contact) => {
+                      contact.method = "Contact Page";
+                      contact.confidence = "Confirmed";
+                    });
 
                     allContacts.push(...contactPageContacts);
 

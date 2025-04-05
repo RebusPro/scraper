@@ -12,6 +12,7 @@ export interface ScrapedContact {
   scrapeTime?: string; // Added for export functionality
   alternateEmails?: string[]; // Added for storing alternative email formats
   confidence?: "Confirmed" | "Generated" | "Generated - Verification Required"; // Confidence level in the email address
+  method?: string; // Method used to find this email (e.g., "Contact Page", "Main Page", "Contact Page Mailto Link")
 }
 
 export interface ScrapingResult {

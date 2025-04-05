@@ -99,7 +99,18 @@ export function extractEmails(content: string): string[] {
             !email.includes("webpack") &&
             !email.includes("babel") &&
             !/\d+\.\d+\.\d+/.test(email) && // Skip version numbers
-            email.indexOf("@") === email.lastIndexOf("@") // Ensure only one @ symbol
+            email.indexOf("@") === email.lastIndexOf("@") && // Ensure only one @ symbol
+            // Additional filters for package names and tracking IDs
+            !email.includes("@sentry") && // Exclude sentry tracking
+            !email.includes("-js@") && // Exclude packages like core-js
+            !email.includes("-bundle@") && // Exclude bundles like core-js-bundle
+            !email.includes("-polyfill@") && // Exclude polyfills
+            !email.includes("react@") && // Exclude React package references
+            !email.includes("react-dom@") && // Exclude React DOM package
+            !email.includes("lodash@") && // Exclude lodash package
+            !email.includes("jquery@") && // Exclude jquery package
+            !/^[a-f0-9]{32}@/.test(email) && // Exclude long hexadecimal IDs at start
+            !/^[a-zA-Z0-9_-]+@\d+\.\d+\.\d+$/.test(email) // Exclude package@version format
           );
         })
     ),
