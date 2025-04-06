@@ -1,5 +1,5 @@
 /**
- * Component to display scraping results
+ * Component to display scraping results with enhanced viewing and export options
  */
 "use client";
 
@@ -7,57 +7,114 @@ import { useState } from "react";
 import { ScrapedContact, ScrapingResult } from "@/lib/scraper/types";
 
 interface ResultsDisplayProps {
-  result: ScrapingResult | null;
+  result: ScrapingResult | null; // Keep in interface for API compatibility
+  allResults: ScrapingResult[];
   onDownload: (format: "xlsx" | "csv") => void;
   isDownloading: boolean;
 }
 
 export default function ResultsDisplay({
-  result,
+  allResults,
   onDownload,
   isDownloading,
 }: ResultsDisplayProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedSite, setSelectedSite] = useState<string | null>(null);
 
-  if (!result) return null;
+  // Get all contacts from all results, ensuring we have valid contacts
+  const allContacts = allResults
+    .flatMap((r) => r.contacts || [])
+    .filter(
+      (contact): contact is ScrapedContact =>
+        !!contact && typeof contact === "object"
+    );
 
-  const { contacts, url, status, timestamp, stats } = result;
+  // Filter contacts based on search term and selected site
+  const filteredContacts = allContacts.filter((contact) => {
+    const matchesSearch =
+      !searchTerm ||
+      (contact.email &&
+        contact.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (contact.name &&
+        contact.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (contact.title &&
+        contact.title.toLowerCase().includes(searchTerm.toLowerCase()));
 
-  // Filter contacts based on search term
-  const filteredContacts = searchTerm
-    ? contacts.filter(
-        (contact) =>
-          contact.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (contact.name &&
-            contact.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-          (contact.title &&
-            contact.title.toLowerCase().includes(searchTerm.toLowerCase()))
-      )
-    : contacts;
+    const matchesSite = !selectedSite || contact.source === selectedSite;
+
+    return matchesSearch && matchesSite;
+  });
+
+  // Group sites by domain for the filter dropdown
+  const sites = [...new Set(allResults.map((r) => r.url))];
+
+  // Compute stats with null checks
+  const totalSites = allResults.length;
+  const totalEmails = allContacts.length;
+  const emailsWithNames = allContacts.filter((c) => c && c.name).length;
+  const emailsWithTitles = allContacts.filter((c) => c && c.title).length;
+
+  // Add debugging info to help diagnose UI issues
+  console.log("ResultsDisplay rendering with:", {
+    totalResults: allResults.length,
+    totalContacts: allContacts.length,
+    resultsWithContacts: allResults.filter(
+      (r) => r.contacts && r.contacts.length > 0
+    ).length,
+    allResults: allResults.map((r) => ({
+      url: r.url,
+      contactCount: r.contacts?.length || 0,
+      status: r.status,
+    })),
+  });
 
   return (
-    <div className="w-full bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+    <div className="w-full bg-gray-800 dark:bg-gray-800 rounded-lg shadow-md p-6">
+      {/* Debug section - only visible during development */}
+      {/* <div className="mb-4 p-3 bg-gray-900 border border-yellow-200 rounded text-sm">
+        <div className="font-bold text-yellow-800">Debug Info:</div>
+        <div>Total Sites: {totalSites}</div>
+        <div>Total Emails: {totalEmails}</div>
+        <div>
+          Results with data:{" "}
+          {allResults.filter((r) => r.contacts?.length > 0).length}
+        </div>
+        <div className="mt-2">
+          <div className="font-bold">Raw Results:</div>
+          <pre className="text-xs overflow-auto max-h-40 bg-gray-400 p-2 rounded">
+            {JSON.stringify(
+              allResults.map((r) => ({
+                url: r.url,
+                emails: r.contacts?.length || 0,
+                status: r.status,
+              })),
+              null,
+              2
+            )}
+          </pre>
+        </div>
+      </div> */}
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-semibold text-gray-800 dark:text-white">
             Scraping Results
           </h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            {new Date(timestamp).toLocaleString()} • {url}
+            {new Date().toLocaleString()}
           </p>
         </div>
 
         <div className="flex space-x-2 mt-4 md:mt-0">
           <button
             onClick={() => onDownload("xlsx")}
-            disabled={isDownloading || contacts.length === 0}
+            disabled={isDownloading || allContacts.length === 0}
             className="px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isDownloading ? "Downloading..." : "Excel"}
           </button>
           <button
             onClick={() => onDownload("csv")}
-            disabled={isDownloading || contacts.length === 0}
+            disabled={isDownloading || allContacts.length === 0}
             className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isDownloading ? "Downloading..." : "CSV"}
@@ -65,46 +122,91 @@ export default function ResultsDisplay({
         </div>
       </div>
 
-      {status === "error" ? (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/30 rounded-md p-4 mb-4">
-          <p className="text-red-700 dark:text-red-400">
-            {result.message || "An error occurred while scraping the website."}
-          </p>
+      {/* Stats cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-4">
+          <div className="text-2xl font-bold text-indigo-700 dark:text-indigo-400">
+            {totalEmails}
+          </div>
+          <div className="text-sm text-indigo-600 dark:text-indigo-300">
+            Total Emails
+          </div>
         </div>
-      ) : contacts.length === 0 ? (
+        <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
+          <div className="text-2xl font-bold text-green-700 dark:text-green-400">
+            {totalSites}
+          </div>
+          <div className="text-sm text-green-600 dark:text-green-300">
+            Sites Scraped
+          </div>
+        </div>
+        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+          <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">
+            {emailsWithNames}
+          </div>
+          <div className="text-sm text-blue-600 dark:text-blue-300">
+            With Names
+          </div>
+        </div>
+        <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4">
+          <div className="text-2xl font-bold text-purple-700 dark:text-purple-400">
+            {emailsWithTitles}
+          </div>
+          <div className="text-sm text-purple-600 dark:text-purple-300">
+            With Titles
+          </div>
+        </div>
+      </div>
+
+      {allContacts.length === 0 ? (
         <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-900/30 rounded-md p-4 mb-4">
           <p className="text-yellow-700 dark:text-yellow-400">
-            No email addresses found on this website. Try enabling advanced
-            options or try a different URL.
+            No email addresses found. Try enabling advanced options or try
+            different websites.
           </p>
         </div>
       ) : (
         <>
-          <div className="flex justify-between items-center mb-4">
-            <div className="text-sm text-gray-600 dark:text-gray-300">
-              Found <span className="font-semibold">{contacts.length}</span>{" "}
-              email addresses
-              {stats?.totalWithNames
-                ? ` (${stats.totalWithNames} with names)`
-                : ""}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+            {/* Search and filter controls */}
+            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search emails, names..."
+                  className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white w-full sm:w-64"
+                />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm("")}
+                    className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
+              <select
+                value={selectedSite || ""}
+                onChange={(e) => setSelectedSite(e.target.value || null)}
+                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
+              >
+                <option value="">All Sites</option>
+                {sites.map((site, i) => (
+                  <option key={i} value={site}>
+                    {site.replace(/^https?:\/\//, "").replace(/^www\./, "")}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div className="relative">
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search results..."
-                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm("")}
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-                >
-                  ×
-                </button>
-              )}
+            <div className="text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap">
+              Showing{" "}
+              <span className="font-semibold">{filteredContacts.length}</span>{" "}
+              of <span className="font-semibold">{allContacts.length}</span>{" "}
+              contacts
             </div>
           </div>
 
@@ -130,13 +232,19 @@ export default function ResultsDisplay({
                   >
                     Title/Position
                   </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+                  >
+                    Source
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {filteredContacts.map(
                   (contact: ScrapedContact, index: number) => (
                     <tr
-                      key={index}
+                      key={`${contact.email}-${index}`}
                       className="hover:bg-gray-50 dark:hover:bg-gray-700/50"
                     >
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-indigo-600 dark:text-indigo-400">
@@ -150,8 +258,20 @@ export default function ResultsDisplay({
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
                         {contact.name || "-"}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300 truncate max-w-[200px]">
                         {contact.title || "-"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300 truncate max-w-[200px]">
+                        <a
+                          href={contact.source}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:underline text-blue-600 dark:text-blue-400"
+                        >
+                          {contact.source
+                            ?.replace(/^https?:\/\//, "")
+                            .replace(/^www\./, "")}
+                        </a>
                       </td>
                     </tr>
                   )

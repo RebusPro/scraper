@@ -5,7 +5,14 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
 import { extractEmails, processContactData } from "./emailExtractor";
-import { ScrapedContact, ScrapingOptions, ScrapingResult } from "./types";
+import { extractDataFromJson } from "./jsonExtractor";
+import {
+  ScrapedContact,
+  ScrapingOptions,
+  ScrapingResult,
+  ApiResponse,
+} from "./types";
+import { PlaywrightScraper } from "./playwrightScraper";
 
 export class WebScraper {
   private defaultOptions: ScrapingOptions = {
@@ -14,6 +21,12 @@ export class WebScraper {
     timeout: 30000, // 30 seconds
     useHeadless: true,
     includePhoneNumbers: true,
+    formInteraction: {
+      enabled: false,
+      waitTime: 2000, // Default wait time after form submission
+    },
+    // Default to false, but can be enabled for complex sites
+    usePlaywright: false,
   };
 
   constructor(private options: ScrapingOptions = {}) {
@@ -28,6 +41,7 @@ export class WebScraper {
       // Normalize URL
       const normalizedUrl = this.normalizeUrl(url);
       let contacts: ScrapedContact[] = [];
+      let allApiResponses: ApiResponse[] = [];
       let staticScrapingFailed = false;
       let dynamicScrapingFailed = false;
       let pagesScraped = 0;
@@ -47,24 +61,87 @@ export class WebScraper {
         );
       }
 
-      // If static scraping failed or found no emails and Puppeteer is enabled, try with browser rendering
-      if (
-        (staticScrapingFailed || contacts.length === 0) &&
-        this.options.useHeadless
-      ) {
-        try {
-          const dynamicContacts = await this.scrapeDynamicContent(
-            normalizedUrl
-          );
-          contacts = [...contacts, ...dynamicContacts];
-        } catch (error) {
-          console.warn(`Dynamic scraping failed for ${normalizedUrl}:`, error);
-          dynamicScrapingFailed = true;
-          errorMessages.push(
-            `Dynamic scraping error: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
+      // If static scraping failed or found no emails, try with dynamic browser rendering
+      if (staticScrapingFailed || contacts.length === 0) {
+        // First try with Playwright if enabled (better for complex dynamic sites)
+        if (this.options.usePlaywright) {
+          try {
+            console.log(`Using Playwright for ${normalizedUrl}`);
+            const playwrightScraper = new PlaywrightScraper();
+            const {
+              contacts: playwrightContacts,
+              apiResponses: playwrightResponses,
+            } = await playwrightScraper.scrapeWebsite(
+              normalizedUrl,
+              this.options
+            );
+            contacts = [...contacts, ...playwrightContacts];
+            console.log(
+              `Playwright found ${playwrightContacts.length} contacts`
+            );
+            allApiResponses = [
+              ...allApiResponses,
+              ...(playwrightResponses || []),
+            ];
+          } catch (error) {
+            console.warn(
+              `Playwright scraping failed for ${normalizedUrl}:`,
+              error
+            );
+            dynamicScrapingFailed = true;
+            errorMessages.push(
+              `Playwright scraping error: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+
+            // Fall back to Puppeteer if Playwright fails and Puppeteer is enabled
+            if (this.options.useHeadless) {
+              try {
+                console.log(`Falling back to Puppeteer for ${normalizedUrl}`);
+                const {
+                  contacts: puppeteerContacts,
+                  apiResponses: puppeteerResponses,
+                } = await this.scrapeDynamicContent(normalizedUrl);
+                contacts = [...contacts, ...puppeteerContacts];
+                allApiResponses = [...allApiResponses, ...puppeteerResponses];
+              } catch (puppeteerError) {
+                console.warn(
+                  `Puppeteer scraping failed for ${normalizedUrl}:`,
+                  puppeteerError
+                );
+                errorMessages.push(
+                  `Puppeteer scraping error: ${
+                    puppeteerError instanceof Error
+                      ? puppeteerError.message
+                      : String(puppeteerError)
+                  }`
+                );
+              }
+            }
+          }
+        }
+        // Otherwise use Puppeteer if enabled
+        else if (this.options.useHeadless) {
+          try {
+            const {
+              contacts: puppeteerContacts,
+              apiResponses: puppeteerResponses,
+            } = await this.scrapeDynamicContent(normalizedUrl);
+            contacts = [...contacts, ...puppeteerContacts];
+            allApiResponses = [...allApiResponses, ...puppeteerResponses];
+          } catch (error) {
+            console.warn(
+              `Puppeteer scraping failed for ${normalizedUrl}:`,
+              error
+            );
+            dynamicScrapingFailed = true;
+            errorMessages.push(
+              `Dynamic scraping error: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+          }
         }
       }
 
@@ -101,10 +178,12 @@ export class WebScraper {
           // If static scraping failed or found no emails and Puppeteer is enabled, try with browser rendering
           if (pageStaticFailed && this.options.useHeadless) {
             try {
-              const dynamicContacts = await this.scrapeDynamicContent(
-                contactUrl
-              );
+              const {
+                contacts: dynamicContacts,
+                apiResponses: dynamicResponses,
+              } = await this.scrapeDynamicContent(contactUrl);
               contacts = [...contacts, ...dynamicContacts];
+              allApiResponses = [...allApiResponses, ...dynamicResponses];
             } catch (error) {
               console.warn(`Dynamic scraping failed for ${contactUrl}:`, error);
               // Continue with other pages
@@ -141,6 +220,7 @@ export class WebScraper {
         timestamp: new Date().toISOString(),
         status,
         message,
+        apiResponses: allApiResponses,
         stats: {
           totalEmails: uniqueContacts.length,
           totalWithNames: uniqueContacts.filter((c) => c.name).length,
@@ -215,7 +295,10 @@ export class WebScraper {
   /**
    * Scrape dynamic content using Puppeteer
    */
-  private async scrapeDynamicContent(url: string): Promise<ScrapedContact[]> {
+  private async scrapeDynamicContent(url: string): Promise<{
+    contacts: ScrapedContact[];
+    apiResponses: ApiResponse[];
+  }> {
     let browser;
     try {
       // Launch headless browser with additional settings to avoid detection
@@ -240,8 +323,64 @@ export class WebScraper {
         // TypeScript doesn't recognize ignoreHTTPSErrors in this version
       });
 
-      // Open new page
+      // Open new page with DevTools opened (helps with capturing network requests)
       const page = await browser.newPage();
+
+      // Explicitly create CDP session to monitor network
+      const client = await page.target().createCDPSession();
+
+      // Enable network monitoring
+      await client.send("Network.enable");
+
+      // Store captured network data
+      const networkResponseData: ApiResponse[] = [];
+
+      // Listen for API response data with proper event
+      client.on("Network.responseReceived", async (event) => {
+        try {
+          const response = event.response;
+          const url = response.url;
+
+          // Look for API endpoints by common patterns
+          // This generic approach works for many sites that load data dynamically
+          if (
+            // Common API URL patterns
+            url.includes("/api/") ||
+            url.includes("/data/") ||
+            url.includes("/search") ||
+            url.includes("/find") ||
+            url.includes("json") ||
+            url.includes("list") ||
+            // Content types that likely contain data
+            response.mimeType.includes("json") ||
+            response.mimeType.includes("application/javascript") ||
+            // Any URL parameter that suggests data
+            url.includes("query=") ||
+            url.includes("q=") ||
+            url.includes("filter=") ||
+            url.includes("id=")
+          ) {
+            console.log(`Found potential API endpoint: ${url}`);
+
+            // Get the response body
+            const responseBody = await client.send("Network.getResponseBody", {
+              requestId: event.requestId,
+            });
+
+            // Store the response for later processing
+            if (responseBody && responseBody.body) {
+              networkResponseData.push({
+                url,
+                content: responseBody.body,
+                contentType: response.mimeType || "",
+              });
+              console.log(`Captured API data from: ${url}`);
+            }
+          }
+        } catch (error) {
+          console.warn("Error intercepting network response:", error);
+        }
+      });
 
       // Set a more realistic viewport
       await page.setViewport({
@@ -303,6 +442,69 @@ export class WebScraper {
         timeout: this.options.timeout || 30000,
       });
 
+      // Handle form interactions if enabled
+      if (this.options.formInteraction?.enabled) {
+        console.log("Form interaction is enabled, processing form...");
+        try {
+          // Store reference to formInteraction to avoid TypeScript errors
+          const formInteraction = this.options.formInteraction;
+
+          // Fill form fields if provided
+          if (formInteraction.fields && formInteraction.fields.length > 0) {
+            for (const field of formInteraction.fields) {
+              // Wait for the field to be available
+              await page.waitForSelector(field.selector, { timeout: 5000 });
+
+              // Handle different field types
+              switch (field.type) {
+                case "text":
+                  await page.type(field.selector, field.value);
+                  break;
+                case "select":
+                  await page.select(field.selector, field.value);
+                  break;
+                case "checkbox":
+                  if (field.value === "true") {
+                    await page.click(field.selector);
+                  }
+                  break;
+                case "radio":
+                  await page.click(field.selector);
+                  break;
+              }
+
+              // Small delay between interactions to appear more human-like
+              await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+          }
+
+          // Click submit button if provided
+          if (formInteraction.submitButtonSelector) {
+            await page.waitForSelector(formInteraction.submitButtonSelector, {
+              timeout: 5000,
+            });
+            await page.click(formInteraction.submitButtonSelector);
+
+            // Wait for results to load
+            if (formInteraction.waitForSelector) {
+              // Wait for a specific element to appear
+              await page.waitForSelector(formInteraction.waitForSelector, {
+                timeout: this.options.timeout || 30000,
+              });
+            } else {
+              // Default wait time after submission
+              await new Promise((resolve) =>
+                setTimeout(resolve, formInteraction.waitTime || 2000)
+              );
+            }
+
+            console.log("Form submitted and waited for results");
+          }
+        } catch (error) {
+          console.warn("Form interaction failed:", error);
+        }
+      }
+
       // Scroll down slightly to simulate user behavior and trigger lazy loading
       await page.evaluate(() => {
         window.scrollBy(0, 300);
@@ -318,16 +520,102 @@ export class WebScraper {
       // Extract emails from the rendered content
       const emails = extractEmails(content);
 
-      // Process the extracted data
-      return processContactData(
+      // Also extract emails from API responses
+      let apiContent = "";
+      console.log(
+        `Processing ${networkResponseData.length} captured API responses`
+      );
+
+      for (const response of networkResponseData) {
+        try {
+          console.log(`Processing response from: ${response.url}`);
+
+          // Only attempt to parse if content type suggests JSON
+          if (
+            response.contentType &&
+            (response.contentType.includes("application/json") ||
+              response.contentType.includes("text/javascript")) // Sometimes JSON is served as JS
+          ) {
+            try {
+              // Try parsing as JSON, handling any potential format
+              const jsonData = JSON.parse(response.content);
+              console.log("API response parsed successfully as JSON");
+
+              // For debugging
+              console.log(
+                "API response contains:",
+                Object.keys(jsonData).join(", ")
+              );
+
+              // Enhanced generic processing of API responses to handle any JSON structure
+              console.log("Processing API response using universal extractor");
+
+              // Use our new method to extract data from any JSON structure
+              const extractedData = extractDataFromJson(jsonData);
+
+              // Add any found emails to our collection
+              if (extractedData.emails.length > 0) {
+                console.log(
+                  `Found ${extractedData.emails.length} emails in API response`
+                );
+                emails.push(...extractedData.emails);
+              }
+
+              // Add context information from the JSON data
+              apiContent += extractedData.contextText;
+
+              // Also log phone numbers found, which will be included in the context
+              if (extractedData.phoneNumbers.length > 0) {
+                console.log(
+                  `Found ${extractedData.phoneNumbers.length} phone numbers in API response`
+                );
+              }
+
+              // Log discovered URLs which could be followed for additional information
+              if (extractedData.urls.length > 0) {
+                console.log(
+                  `Found ${extractedData.urls.length} URLs in API response`
+                );
+              }
+            } catch (parseError) {
+              // Log if parsing fails even if content type looked like JSON
+              console.warn(
+                `Failed to parse response from ${response.url} as JSON, even though content type was ${response.contentType}:`,
+                parseError
+              );
+            }
+          } else {
+            // Log skipping responses that are not JSON
+            console.log(
+              `Skipping non-JSON response from ${response.url} (Content-Type: ${response.contentType})`
+            );
+          }
+        } catch (outerError) {
+          // Catch any unexpected errors during the processing of a single response
+          console.error(
+            `Unexpected error processing response from ${response.url}:`,
+            outerError
+          );
+        }
+      }
+
+      // Combine page content with API content for context extraction
+      const combinedContent = content + "\n" + apiContent;
+
+      // Process the extracted data (remove duplicates in processContactData)
+      const contacts = processContactData(
         emails,
-        content,
+        combinedContent,
         url,
         this.options.includePhoneNumbers
       );
+
+      // Return both contacts and the captured API responses
+      return { contacts, apiResponses: networkResponseData };
     } catch (error) {
       console.error(`Error scraping dynamic content from ${url}:`, error);
-      return [];
+      // Return empty results in case of error
+      return { contacts: [], apiResponses: [] };
     } finally {
       // Close the browser
       if (browser) await browser.close();

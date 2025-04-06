@@ -1,119 +1,62 @@
-# Web Scraper Application Plan: Email Harvester
+#Email Extractor
 
-## 1. Architecture Overview
+An enhanced tool to reliably extract coach contact information from websites for marketing campaigns.
 
-```mermaid
-graph TD
-    A[User Interface] --> B[URL Input]
-    B --> C[API Endpoint]
-    C --> D[Scraping Engine]
-    D --> E[Web Request Handler]
-    E --> F[HTML Parser]
-    F --> G[Data Extractor]
-    G --> H[Results Formatter]
-    H --> I[Excel/CSV Generator]
-    I --> J[Download Handler]
-    J --> A
-```
+## What's New
 
-## 2. Technical Stack
+This version includes significant improvements to the email extraction capabilities:
 
-- **Frontend**: Next.js with React
-- **Scraping Technologies**:
-  - Puppeteer (for JavaScript-heavy websites that require browser rendering)
-  - Cheerio (for simpler static HTML parsing)
-- **Data Processing**:
-  - Regular expressions for email extraction
-  - DOM traversal for structured data
-- **Output Generation**:
-  - ExcelJS for Excel file creation
-  - CSV-stringify for CSV option
+- **Enhanced Email Detection**: Improved detection of real coach emails while filtering out false positives
+- **Better Coach Name Association**: More advanced algorithms to pair emails with coach names and titles
+- **Obfuscated Email Handling**: Support for various email protection techniques used on coaching websites
+- **Robust Error Recovery**: Continue processing even when some websites fail
 
-## 3. Core Components
+## Features
 
-### 3.1 User Interface
+- **Upload CSV/Excel Files**: Batch process multiple websites at once
+- **Real-Time Progress**: Monitor scraping progress with live updates
+- **Download Results**: Export found contacts to Excel or CSV format
+- **Customizable Settings**: Control scraping depth and behavior
 
-- Clean, professional single-page design
-- URL input field with validation
-- Submit button with loading state
-- Results display area with preview of found emails
-- Download button for exporting results
+## How It Works
 
-### 3.2 Scraping Engine
+The Coach Email Extractor uses advanced techniques to find real coach contact information:
 
-- **URL Validator/Normalizer**: Ensure URLs are properly formatted
-- **Request Handler**: Handle HTTP requests with proper headers and timeout
-- **Page Renderer**: Use Puppeteer for JavaScript-rendered content when needed
-- **Content Parser**: Extract HTML content for analysis
-- **Email Extractor**: Advanced regex patterns to find emails in text and HTML attributes
-- **Contact Info Extractor**: Extract names and other useful marketing information
-- **Rate Limiter**: Prevent overloading target websites
+1. **Smart Detection**: Analyzes web pages to identify coaching-related content
+2. **Deep Scanning**: Follows relevant links like "Contact", "Staff", "Coaches", etc.
+3. **Pattern Recognition**: Uses coach-specific patterns to extract contact information
+4. **Verification**: Filters out generic emails and technical addresses that aren't real coach contacts
+5. **Data Association**: Pairs emails with names and titles when available
 
-### 3.3 Data Processing
+## Usage
 
-- Duplicate removal
-- Validation of extracted emails
-- Associating emails with names or other context when possible
-- Structuring data for export
+1. **Upload Websites List**: Either paste URLs or upload a CSV/Excel file containing website URLs
+2. **Configure Settings**: Choose between gentle, standard, or aggressive scraping modes
+3. **Start Scraping**: Click the "Start Scraping" button to begin the process
+4. **Monitor Progress**: Watch real-time progress as the tool processes each website
+5. **Download Results**: When completed, download the results in Excel or CSV format
 
-### 3.4 Export Module
+## Best Practices
 
-- Excel file generation with formatted columns
-- CSV alternative option
-- Proper file naming with timestamp
+- **Use Quality Inputs**: Provide specific URLs to coach directories or contact pages when possible
+- **Be Patient**: Complex websites may take longer to process
+- **Try Different Settings**: If a website doesn't yield results, try with different scraping modes
+- **Download Early**: You can download partial results while scraping continues
 
-## 4. Implementation Strategy
+## Important Notes
 
-### Phase 1: Project Setup and Basic UI
+- Some websites intentionally hide contact information or use anti-scraping techniques
+- The tool only extracts real, confirmed emails that appear on the website - it never guesses
+- Websites that require login may not yield complete results
+- Some coaching websites only provide generic contact emails rather than individual coach emails
 
-1. Initialize Next.js project with TypeScript
-2. Create basic UI components
-3. Set up project structure and organization
-4. Implement form validation for URL input
+## Technical Improvements
 
-### Phase 2: Core Scraping Functionality
+For technical users, this version includes:
 
-1. Implement API route for handling scrape requests
-2. Create scraping logic with Cheerio for basic HTML extraction
-3. Add Puppeteer integration for dynamic sites
-4. Develop robust email and contact extraction patterns
-5. Implement error handling and timeout mechanisms
-
-### Phase 3: Results and Export Features
-
-1. Develop results display component
-2. Create Excel/CSV generation functionality
-3. Implement download mechanism
-4. Add loading states and error messages
-
-### Phase 4: Testing and Optimization
-
-1. Test against various website types
-2. Optimize scraping speed and reliability
-3. Improve extraction patterns based on test results
-4. Enhance error handling
-
-## 5. Advanced Features (If Time Permits)
-
-- **Smart Crawling**: Follow internal links to find more contact pages
-- **Proxy Support**: Rotate IP addresses to avoid blocking
-- **Contact Page Detection**: Smart detection of "Contact Us" or similar pages
-- **Data Enrichment**: Match emails with corresponding titles/positions when available
-
-## 6. Challenges and Mitigations
-
-### Challenges:
-
-1. **Anti-Scraping Measures**: Many websites implement protections against scraping
-2. **Dynamic Content**: JavaScript-rendered content may not be accessible with simple HTTP requests
-3. **Diverse HTML Structures**: Each website may organize contact information differently
-4. **Rate Limiting**: Too many requests can get IP blocked
-
-### Mitigations:
-
-1. Use browser-like headers and respect robots.txt
-2. Implement Puppeteer for JavaScript-heavy sites
-3. Create flexible extraction patterns that work across different HTML structures
-4. Add delays between requests and limit concurrent scraping
-
-### END
+- Improved email pattern detection
+- Better handling of HTML-encoded and obfuscated emails
+- Enhanced filtering of false positives
+- Integration with specialized coach directory processing
+- More reliable name and title extraction
+- Robustness against network errors and timeouts

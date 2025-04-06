@@ -1,110 +1,166 @@
 /**
- * Utilities for exporting scraped data to different formats ...
+ * Utilities for exporting scraped data to different formats
  */
-import ExcelJS from "exceljs";
-import { stringify } from "csv-stringify/sync";
-import { ScrapingResult } from "./types";
-import { Buffer } from "buffer";
+import * as XLSX from "xlsx";
 
 /**
- * Generate Excel file from scraping results
+ * Export contacts to Excel (XLSX) format
  */
-export async function generateExcelFile(
-  result: ScrapingResult
-): Promise<Buffer> {
-  // Using any to avoid type issues with Buffer
-  // Create a new workbook
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Email Harvester";
-  workbook.created = new Date();
+export async function exportToExcel(
+  dataToExport: Array<
+    Record<string, string | number | boolean | null | undefined>
+  >,
+  filename: string
+): Promise<void> {
+  try {
+    if (!dataToExport || dataToExport.length === 0) {
+      console.warn("No data provided for Excel export.");
+      return;
+    }
 
-  // Add a worksheet
-  const worksheet = workbook.addWorksheet("Contacts");
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
 
-  // Define columns
-  worksheet.columns = [
-    { header: "Email", key: "email", width: 30 },
-    { header: "Name", key: "name", width: 25 },
-    { header: "Title/Position", key: "title", width: 25 },
-    { header: "Phone", key: "phone", width: 20 },
-    { header: "Source URL", key: "source", width: 40 },
-  ];
-
-  // Add header row styling
-  worksheet.getRow(1).font = { bold: true };
-  worksheet.getRow(1).fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FFE0E0E0" },
-  };
-
-  // Add data rows
-  result.contacts.forEach((contact) => {
-    worksheet.addRow({
-      email: contact.email,
-      name: contact.name || "",
-      title: contact.title || "",
-      phone: contact.phone || "",
-      source: contact.source || result.url,
+    // Auto-calculate column widths (basic)
+    const headers = Object.keys(dataToExport[0]);
+    const colWidths = headers.map((header) => {
+      const maxLength = Math.max(
+        header.length,
+        ...dataToExport.map((row) => String(row[header] ?? "").length)
+      );
+      return { wch: Math.min(50, maxLength + 2) }; // Limit max width
     });
-  });
+    worksheet["!cols"] = colWidths;
 
-  // Add summary information
-  worksheet.addRow({}); // Empty row
-  worksheet.addRow({
-    email: `Total Contacts: ${result.contacts.length}`,
-    name: `With Names: ${result.contacts.filter((c) => c.name).length}`,
-    title: `Scraped URL: ${result.url}`,
-    phone: `Date: ${new Date(result.timestamp).toLocaleString()}`,
-  });
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Contacts");
 
-  // Auto-filter the header row
-  worksheet.autoFilter = {
-    from: { row: 1, column: 1 },
-    to: { row: 1, column: 5 },
-  };
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(buffer as ArrayBuffer);
+    // Generate xlsx file
+    XLSX.writeFile(workbook, `${filename}.xlsx`);
+  } catch (error) {
+    console.error("Error exporting to Excel:", error);
+    throw new Error("Failed to export data to Excel");
+  }
 }
 
 /**
- * Generate CSV file from scraping results
+ * Export contacts to CSV format
  */
-export function generateCsvFile(result: ScrapingResult): Buffer {
-  // Using any to avoid type issues with Buffer
-  // Prepare data for CSV
-  const data = result.contacts.map((contact) => ({
-    Email: contact.email,
-    Name: contact.name || "",
-    Title: contact.title || "",
-    Phone: contact.phone || "",
-    "Source URL": contact.source || result.url,
-  }));
+export function exportToCSV(
+  dataToExport: Array<
+    Record<string, string | number | boolean | null | undefined>
+  >,
+  filename: string
+): void {
+  try {
+    if (!dataToExport || dataToExport.length === 0) {
+      console.warn("No data provided for CSV export.");
+      return;
+    }
 
-  // Generate CSV string
-  const csvString = stringify(data, {
-    header: true,
-    columns: ["Email", "Name", "Title", "Phone", "Source URL"],
-  });
+    // Create worksheet
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
 
-  // Convert to buffer
-  return Buffer.from(csvString);
+    // Create CSV string
+    const csvOutput = XLSX.utils.sheet_to_csv(worksheet);
+
+    // Create download link
+    const blob = new Blob([csvOutput], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `${filename}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (error) {
+    console.error("Error exporting to CSV:", error);
+    throw new Error("Failed to export data to CSV");
+  }
 }
 
 /**
- * Generate a filename for the exported data
+ * Generate Excel file for API endpoint (returns buffer instead of writing to file)
  */
-export function generateFilename(url: string, format: "xlsx" | "csv"): string {
-  // Extract domain from URL
-  let domain = url.replace(/^https?:\/\//, "");
-  domain = domain.split("/")[0];
+export async function generateExcelFile(result: {
+  contacts: Array<Record<string, string | number | boolean | null | undefined>>;
+  url?: string;
+}): Promise<Buffer> {
+  try {
+    if (!result.contacts || result.contacts.length === 0) {
+      throw new Error("No contact data provided for Excel generation.");
+    }
 
-  // Clean up domain for filename
-  domain = domain.replace(/[^a-zA-Z0-9]/g, "_");
+    // Create worksheet directly from the data
+    const worksheet = XLSX.utils.json_to_sheet(result.contacts);
 
-  // Add date
-  const date = new Date().toISOString().split("T")[0];
+    // Auto-calculate column widths (basic)
+    const headers = Object.keys(result.contacts[0]);
+    const colWidths = headers.map((header) => {
+      const maxLength = Math.max(
+        header.length,
+        ...result.contacts.map((row) => String(row[header] ?? "").length)
+      );
+      return { wch: Math.min(50, maxLength + 2) }; // Limit max width
+    });
+    worksheet["!cols"] = colWidths;
 
-  return `contacts_${domain}_${date}.${format}`;
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Contacts");
+
+    // Return buffer
+    return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  } catch (error) {
+    console.error("Error generating Excel file buffer:", error);
+    throw new Error("Failed to generate Excel file buffer");
+  }
+}
+
+/**
+ * Generate CSV file for API endpoint (returns buffer instead of writing to file)
+ */
+export function generateCsvFile(result: {
+  contacts: Array<Record<string, string | number | boolean | null | undefined>>;
+  url?: string;
+}): Buffer {
+  try {
+    if (!result.contacts || result.contacts.length === 0) {
+      throw new Error("No contact data provided for CSV generation.");
+    }
+
+    // Create worksheet - header order determined by keys
+    const worksheet = XLSX.utils.json_to_sheet(result.contacts);
+
+    // Convert to CSV and return as buffer
+    const csvOutput = XLSX.utils.sheet_to_csv(worksheet);
+    return Buffer.from(csvOutput);
+  } catch (error) {
+    console.error("Error generating CSV file buffer:", error);
+    throw new Error("Failed to generate CSV file buffer");
+  }
+}
+
+/**
+ * Generate a filename for exports based on the URL and format
+ */
+export function generateFilename(
+  url: string = "",
+  format: string = "xlsx"
+): string {
+  // Parse domain from URL
+  let domain = "";
+  try {
+    domain = new URL(url).hostname.replace(/\./g, "_");
+  } catch {
+    domain = "scrape_results";
+  }
+
+  // Add timestamp
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:T]/g, "-")
+    .split(".")[0];
+  return `${domain}_${timestamp}.${format}`;
 }
