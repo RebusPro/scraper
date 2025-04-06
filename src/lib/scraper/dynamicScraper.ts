@@ -9,8 +9,8 @@ import {
   extractNameFromEmailContext as extractNameFromContext,
   extractTitleFromEmailContext as extractTitleFromContext,
 } from "./emailExtractor";
-import { Page, ElementHandle } from "playwright";
-import { getNameFromText, getTitleFromText } from "./utils";
+import { Page } from "playwright";
+import { getNameFromText } from "./utils";
 
 // Type definitions
 export interface CoachData {
@@ -24,67 +24,67 @@ export interface EmailNamePair {
   name?: string;
 }
 
-interface CoachSelectors {
-  COACH_CARD: string[];
-  EMAIL: string[];
-  NAME: string[];
-  POSITION: string[];
-}
+// interface CoachSelectors {
+//   COACH_CARD: string[];
+//   EMAIL: string[];
+//   NAME: string[];
+//   POSITION: string[];
+// }
 
 // Common selectors for coaching websites
-const COACH_SELECTORS: CoachSelectors = {
-  // Coach cards/profiles
-  COACH_CARD: [
-    ".coach-card",
-    ".staff-member",
-    ".coach-profile",
-    ".team-member",
-    ".card",
-    ".profile",
-    "[class*='coach']",
-    "[class*='staff']",
-    "article",
-  ],
+// const COACH_SELECTORS: CoachSelectors = {
+//   // Coach cards/profiles
+//   COACH_CARD: [
+//     ".coach-card",
+//     ".staff-member",
+//     ".coach-profile",
+//     ".team-member",
+//     ".card",
+//     ".profile",
+//     "[class*='coach']",
+//     "[class*='staff']",
+//     "article",
+//   ],
 
-  // Contact information
-  EMAIL: [
-    "a[href^='mailto:']",
-    ".email",
-    ".contact-email",
-    "[class*='email']",
-    "[data-email]",
-    "[class*='contact']",
-  ],
+//   // Contact information
+//   EMAIL: [
+//     "a[href^='mailto:']",
+//     ".email",
+//     ".contact-email",
+//     "[class*='email']",
+//     "[data-email]",
+//     "[class*='contact']",
+//   ],
 
-  // Name selectors
-  NAME: [
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    ".name",
-    ".coach-name",
-    ".staff-name",
-    ".title",
-    "strong",
-    ".profile-name",
-  ],
+//   // Name selectors
+//   NAME: [
+//     "h1",
+//     "h2",
+//     "h3",
+//     "h4",
+//     ".name",
+//     ".coach-name",
+//     ".staff-name",
+//     ".title",
+//     "strong",
+//     ".profile-name",
+//   ],
 
-  // Title/position selectors
-  POSITION: [
-    ".position",
-    ".title",
-    ".coach-title",
-    ".role",
-    ".job-title",
-    ".designation",
-    "[class*='position']",
-    "[class*='title']",
-    "[class*='role']",
-    "em",
-    "i",
-  ],
-};
+//   // Title/position selectors
+//   POSITION: [
+//     ".position",
+//     ".title",
+//     ".coach-title",
+//     ".role",
+//     ".job-title",
+//     ".designation",
+//     "[class*='position']",
+//     "[class*='title']",
+//     "[class*='role']",
+//     "em",
+//     "i",
+//   ],
+// };
 
 /**
  * Process coaching directory websites with specialized selectors and strategies

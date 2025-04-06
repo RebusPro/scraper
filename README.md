@@ -1,4 +1,4 @@
-# Coach Email Extractor
+#Email Extractor
 
 An enhanced tool to reliably extract coach contact information from websites for marketing campaigns.
 

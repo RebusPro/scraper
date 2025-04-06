@@ -222,7 +222,8 @@ export default function EnhancedBatchUploader({
           string.startsWith("www.") ||
           /^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}/.test(string)) // domain-like pattern
       );
-    } catch (_) {
+    } catch (error) {
+      console.error("Error validating URL:", error);
       return false;
     }
   };
@@ -398,7 +399,8 @@ export default function EnhancedBatchUploader({
                     <p>
                       Your Excel file should include a column with website URLs.
                       Our system will automatically detect columns with headers
-                      like "Website", "URL", or "Link".
+                      like &quot;Website&quot;, &quot;URL&quot;, or
+                      &quot;Link&quot;.
                     </p>
                     <button
                       onClick={() => setShowExcelHelp(!showExcelHelp)}
