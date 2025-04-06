@@ -6,7 +6,12 @@ import * as cheerio from "cheerio";
 import puppeteer from "puppeteer";
 import { extractEmails, processContactData } from "./emailExtractor";
 import { extractDataFromJson } from "./jsonExtractor";
-import { ScrapedContact, ScrapingOptions, ScrapingResult } from "./types";
+import {
+  ScrapedContact,
+  ScrapingOptions,
+  ScrapingResult,
+  ApiResponse,
+} from "./types";
 import { PlaywrightScraper } from "./playwrightScraper";
 
 export class WebScraper {
@@ -36,6 +41,7 @@ export class WebScraper {
       // Normalize URL
       const normalizedUrl = this.normalizeUrl(url);
       let contacts: ScrapedContact[] = [];
+      let allApiResponses: ApiResponse[] = [];
       let staticScrapingFailed = false;
       let dynamicScrapingFailed = false;
       let pagesScraped = 0;
@@ -62,7 +68,10 @@ export class WebScraper {
           try {
             console.log(`Using Playwright for ${normalizedUrl}`);
             const playwrightScraper = new PlaywrightScraper();
-            const playwrightContacts = await playwrightScraper.scrapeWebsite(
+            const {
+              contacts: playwrightContacts,
+              apiResponses: playwrightResponses,
+            } = await playwrightScraper.scrapeWebsite(
               normalizedUrl,
               this.options
             );
@@ -70,6 +79,7 @@ export class WebScraper {
             console.log(
               `Playwright found ${playwrightContacts.length} contacts`
             );
+            allApiResponses = [...allApiResponses, ...playwrightResponses];
           } catch (error) {
             console.warn(
               `Playwright scraping failed for ${normalizedUrl}:`,
@@ -86,10 +96,12 @@ export class WebScraper {
             if (this.options.useHeadless) {
               try {
                 console.log(`Falling back to Puppeteer for ${normalizedUrl}`);
-                const puppeteerContacts = await this.scrapeDynamicContent(
-                  normalizedUrl
-                );
+                const {
+                  contacts: puppeteerContacts,
+                  apiResponses: puppeteerResponses,
+                } = await this.scrapeDynamicContent(normalizedUrl);
                 contacts = [...contacts, ...puppeteerContacts];
+                allApiResponses = [...allApiResponses, ...puppeteerResponses];
               } catch (puppeteerError) {
                 console.warn(
                   `Puppeteer scraping failed for ${normalizedUrl}:`,
@@ -109,10 +121,12 @@ export class WebScraper {
         // Otherwise use Puppeteer if enabled
         else if (this.options.useHeadless) {
           try {
-            const puppeteerContacts = await this.scrapeDynamicContent(
-              normalizedUrl
-            );
+            const {
+              contacts: puppeteerContacts,
+              apiResponses: puppeteerResponses,
+            } = await this.scrapeDynamicContent(normalizedUrl);
             contacts = [...contacts, ...puppeteerContacts];
+            allApiResponses = [...allApiResponses, ...puppeteerResponses];
           } catch (error) {
             console.warn(
               `Puppeteer scraping failed for ${normalizedUrl}:`,
@@ -161,10 +175,12 @@ export class WebScraper {
           // If static scraping failed or found no emails and Puppeteer is enabled, try with browser rendering
           if (pageStaticFailed && this.options.useHeadless) {
             try {
-              const dynamicContacts = await this.scrapeDynamicContent(
-                contactUrl
-              );
+              const {
+                contacts: dynamicContacts,
+                apiResponses: dynamicResponses,
+              } = await this.scrapeDynamicContent(contactUrl);
               contacts = [...contacts, ...dynamicContacts];
+              allApiResponses = [...allApiResponses, ...dynamicResponses];
             } catch (error) {
               console.warn(`Dynamic scraping failed for ${contactUrl}:`, error);
               // Continue with other pages
@@ -201,6 +217,7 @@ export class WebScraper {
         timestamp: new Date().toISOString(),
         status,
         message,
+        apiResponses: allApiResponses,
         stats: {
           totalEmails: uniqueContacts.length,
           totalWithNames: uniqueContacts.filter((c) => c.name).length,
@@ -275,7 +292,10 @@ export class WebScraper {
   /**
    * Scrape dynamic content using Puppeteer
    */
-  private async scrapeDynamicContent(url: string): Promise<ScrapedContact[]> {
+  private async scrapeDynamicContent(url: string): Promise<{
+    contacts: ScrapedContact[];
+    apiResponses: ApiResponse[];
+  }> {
     let browser;
     try {
       // Launch headless browser with additional settings to avoid detection
@@ -310,11 +330,6 @@ export class WebScraper {
       await client.send("Network.enable");
 
       // Store captured network data
-      interface ApiResponse {
-        url: string;
-        content: string;
-        contentType: string;
-      }
       const networkResponseData: ApiResponse[] = [];
 
       // Listen for API response data with proper event
@@ -512,48 +527,72 @@ export class WebScraper {
         try {
           console.log(`Processing response from: ${response.url}`);
 
-          // Try parsing as JSON, handling any potential format
-          const jsonData = JSON.parse(response.content);
-          console.log("API response parsed successfully");
+          // Only attempt to parse if content type suggests JSON
+          if (
+            response.contentType &&
+            (response.contentType.includes("application/json") ||
+              response.contentType.includes("text/javascript")) // Sometimes JSON is served as JS
+          ) {
+            try {
+              // Try parsing as JSON, handling any potential format
+              const jsonData = JSON.parse(response.content);
+              console.log("API response parsed successfully as JSON");
 
-          // For debugging
-          console.log(
-            "API response contains:",
-            Object.keys(jsonData).join(", ")
+              // For debugging
+              console.log(
+                "API response contains:",
+                Object.keys(jsonData).join(", ")
+              );
+
+              // Enhanced generic processing of API responses to handle any JSON structure
+              console.log("Processing API response using universal extractor");
+
+              // Use our new method to extract data from any JSON structure
+              const extractedData = extractDataFromJson(jsonData);
+
+              // Add any found emails to our collection
+              if (extractedData.emails.length > 0) {
+                console.log(
+                  `Found ${extractedData.emails.length} emails in API response`
+                );
+                emails.push(...extractedData.emails);
+              }
+
+              // Add context information from the JSON data
+              apiContent += extractedData.contextText;
+
+              // Also log phone numbers found, which will be included in the context
+              if (extractedData.phoneNumbers.length > 0) {
+                console.log(
+                  `Found ${extractedData.phoneNumbers.length} phone numbers in API response`
+                );
+              }
+
+              // Log discovered URLs which could be followed for additional information
+              if (extractedData.urls.length > 0) {
+                console.log(
+                  `Found ${extractedData.urls.length} URLs in API response`
+                );
+              }
+            } catch (parseError) {
+              // Log if parsing fails even if content type looked like JSON
+              console.warn(
+                `Failed to parse response from ${response.url} as JSON, even though content type was ${response.contentType}:`,
+                parseError
+              );
+            }
+          } else {
+            // Log skipping responses that are not JSON
+            console.log(
+              `Skipping non-JSON response from ${response.url} (Content-Type: ${response.contentType})`
+            );
+          }
+        } catch (outerError) {
+          // Catch any unexpected errors during the processing of a single response
+          console.error(
+            `Unexpected error processing response from ${response.url}:`,
+            outerError
           );
-
-          // Enhanced generic processing of API responses to handle any JSON structure
-          console.log("Processing API response using universal extractor");
-
-          // Use our new method to extract data from any JSON structure
-          const extractedData = extractDataFromJson(jsonData);
-
-          // Add any found emails to our collection
-          if (extractedData.emails.length > 0) {
-            console.log(
-              `Found ${extractedData.emails.length} emails in API response`
-            );
-            emails.push(...extractedData.emails);
-          }
-
-          // Add context information from the JSON data
-          apiContent += extractedData.contextText;
-
-          // Also log phone numbers found, which will be included in the context
-          if (extractedData.phoneNumbers.length > 0) {
-            console.log(
-              `Found ${extractedData.phoneNumbers.length} phone numbers in API response`
-            );
-          }
-
-          // Log discovered URLs which could be followed for additional information
-          if (extractedData.urls.length > 0) {
-            console.log(
-              `Found ${extractedData.urls.length} URLs in API response`
-            );
-          }
-        } catch (error) {
-          console.warn("Error processing API response:", error);
         }
       }
 
@@ -561,15 +600,19 @@ export class WebScraper {
       const combinedContent = content + "\n" + apiContent;
 
       // Process the extracted data (remove duplicates in processContactData)
-      return processContactData(
+      const contacts = processContactData(
         emails,
         combinedContent,
         url,
         this.options.includePhoneNumbers
       );
+
+      // Return both contacts and the captured API responses
+      return { contacts, apiResponses: networkResponseData };
     } catch (error) {
       console.error(`Error scraping dynamic content from ${url}:`, error);
-      return [];
+      // Return empty results in case of error
+      return { contacts: [], apiResponses: [] };
     } finally {
       // Close the browser
       if (browser) await browser.close();

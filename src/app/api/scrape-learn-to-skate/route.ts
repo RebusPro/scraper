@@ -370,117 +370,29 @@ export async function POST(request: NextRequest) {
             console.error(`Error parsing API response: ${e}`);
           }
         }
-      } // Modify and enhance the contacts with program info from the API
+      } // --- REVISED LOGIC: Build contacts DIRECTLY from the API Map ---
 
-      const enhancedContacts: ScrapedContact[] = result.contacts.map(
-        (contact) => {
-          // Make sure to use lowercase for lookup to match how we stored entries
+      // Initialize the list for enhanced contacts
+      const enhancedContacts: ScrapedContact[] = [];
 
-          const lowerEmail = contact.email.toLowerCase();
+      // Iterate through the verified programs found in the API response map
+      for (const [email, apiProgramInfo] of apiProgramsMap.entries()) {
+        console.log(
+          `Processing verified API program for ${email}: Name='${apiProgramInfo.name}', Website='${apiProgramInfo.website}', Phone='${apiProgramInfo.phone}'`
+        );
 
-          console.log(
-            `Processing email: ${contact.email} (lookup key: ${lowerEmail})`
-          ); // First try to find the program in the API response
+        // Add the verified program to our results list
+        enhancedContacts.push({
+          email: email, // Use the email from the map key (already lowercased)
+          name: apiProgramInfo.name, // Use name from API
+          title: "Organization", // Default title
+          phone: apiProgramInfo.phone || "", // Use phone from API, default to empty string
+          url: apiProgramInfo.website || "", // Use website from API, default to empty string
+          source: "Learn to Skate USA API", // Mark as sourced from API
+        });
+      }
 
-          const apiProgramInfo = apiProgramsMap.get(lowerEmail);
-
-          if (apiProgramInfo) {
-            console.log(
-              `Found API program info for ${contact.email}: ${apiProgramInfo.name}`
-            );
-
-            return {
-              email: contact.email,
-
-              name: apiProgramInfo.name,
-
-              title: contact.title || "Organization",
-
-              phone: apiProgramInfo.phone || contact.phone || "",
-
-              url: apiProgramInfo.website,
-
-              source: "Learn to Skate USA API",
-            };
-          } // If we couldn't find program info in our mapping, // we need to try other methods to extract program info // Method 1: Look in email context to find related HTML
-
-          const context = contact.method || contact.source || "";
-
-          let extractedName = "";
-
-          let extractedWebsite = ""; // Try to find program name in context
-
-          const nameInContext = context.match(
-            /class=["']listing-heading[^"']*["'][^>]*>([\s\S]*?)<\/p>/i
-          );
-
-          if (nameInContext) {
-            extractedName = nameInContext[1].trim();
-          } // Try to find website in context
-
-          const websiteInContext = context.match(
-            /href=["']([^"']+)["'][^>]*target=["']_blank["']/i
-          );
-
-          if (websiteInContext) {
-            extractedWebsite = websiteInContext[1].trim();
-          }
-
-          if (extractedName || extractedWebsite) {
-            return {
-              email: contact.email,
-
-              name: extractedName || "Unknown Program",
-
-              title: contact.title || "Organization",
-
-              phone: contact.phone || "",
-
-              url: extractedWebsite,
-
-              source: "Learn to Skate USA API",
-            };
-          } // Method 2: Extract from email domain as last resort
-
-          const emailDomain = contact.email.split("@")[1] || "";
-
-          let domainBasedName = "";
-
-          if (
-            emailDomain &&
-            !emailDomain.includes("gmail.com") &&
-            !emailDomain.includes("hotmail.com")
-          ) {
-            // Transform domain like "cityoflaramie.org" into "City of Laramie"
-
-            domainBasedName = emailDomain
-
-              .split(".")[0]
-              .replace(/([A-Z])/g, " $1") // Add spaces before capital letters
-
-              .replace(/([a-z])([A-Z])/g, "$1 $2") // Add spaces between camelCase
-
-              .replace(/^./, (str) => str.toUpperCase()) // Capitalize first letter
-
-              .replace(/of|and/, (match) => match.toLowerCase()); // Common words lowercase
-          }
-
-          return {
-            email: contact.email,
-
-            name: domainBasedName || contact.name || "Unknown Program",
-
-            title: contact.title || "Organization",
-
-            phone: contact.phone || "",
-
-            url: emailDomain ? `https://www.${emailDomain}` : "",
-
-            source: "Learn to Skate USA API",
-          };
-        }
-      ); // Create program information for raw display
-
+      // Create program information for raw display (using the correctly built enhancedContacts)
       const formattedPrograms = enhancedContacts.map((contact) => ({
         OrganizationName: contact.name,
 

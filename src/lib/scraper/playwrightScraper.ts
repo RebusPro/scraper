@@ -2,7 +2,12 @@
  * Enhanced Playwright-based web scraper
  * Specialized for handling dynamic websites with improved reliability
  */
-import { ScrapedContact, ScrapingOptions } from "./types";
+import {
+  ScrapedContact,
+  ScrapingOptions,
+  ApiResponse,
+  ScrapingResult,
+} from "./types";
 import { extractEmails, processContactData } from "./emailExtractor";
 import { chromium, firefox, webkit, Page, Browser } from "playwright";
 import { processCoachDirectory } from "./dynamicScraper";
@@ -27,7 +32,7 @@ export class PlaywrightScraper {
   async scrapeWebsite(
     url: string,
     options: ScrapingOptions = {}
-  ): Promise<ScrapedContact[]> {
+  ): Promise<ScrapingResult> {
     // Set defaults
     const useHeadless = options.useHeadless ?? true;
     const maxDepth = options.maxDepth ?? 2;
@@ -39,7 +44,7 @@ export class PlaywrightScraper {
     const visitedUrls = new Set<string>();
     const pendingUrls: { url: string; depth: number }[] = [{ url, depth: 0 }];
     const pageResponses = new Set<string>();
-    const apiResponses: { url: string; content: string }[] = [];
+    const capturedApiResponses: ApiResponse[] = [];
 
     // For debugging purposes
     console.log(`Starting scrape for URL: ${url} with browser: ${browserType}`);
@@ -85,7 +90,11 @@ export class PlaywrightScraper {
             const text = await response.text().catch(() => "");
             if (text && text.length > 0) {
               console.log(`Captured API data from: ${respUrl}`);
-              apiResponses.push({ url: respUrl, content: text });
+              capturedApiResponses.push({
+                url: respUrl,
+                content: text,
+                contentType: contentType,
+              });
               pageResponses.add(respUrl);
             }
           }
@@ -217,17 +226,19 @@ export class PlaywrightScraper {
       }
 
       // Process all API responses for additional data regardless of mode
-      console.log(`Processing ${apiResponses.length} captured API responses`);
+      console.log(
+        `Processing ${capturedApiResponses.length} captured API responses`
+      );
 
       // Look specifically for email encoder patterns in the API responses
-      const encodedEmails = this.extractEncodedEmails(apiResponses);
+      const encodedEmails = this.extractEncodedEmails(capturedApiResponses);
       if (encodedEmails.length > 0) {
         console.log(
           `Found ${encodedEmails.length} encoded emails in API responses`
         );
         const encodedContacts = encodedEmails.map((email) => {
           // Find name context if available
-          const namePart = this.findNameNearEmail(apiResponses, email);
+          const namePart = this.findNameNearEmail(capturedApiResponses, email);
           return {
             email,
             name: namePart || undefined,
@@ -244,7 +255,7 @@ export class PlaywrightScraper {
       }
 
       // Process contact pages for any site that might have encoded emails
-      const contactPages = apiResponses.filter(
+      const contactPages = capturedApiResponses.filter(
         (r) =>
           r.url.toLowerCase().includes("/contact") ||
           r.url.toLowerCase().includes("/about") ||
@@ -262,7 +273,10 @@ export class PlaywrightScraper {
           // Process all found emails
           for (const email of emailMatches) {
             // Look for name context around the email
-            const nameContext = this.findNameNearEmail([contactPage], email);
+            const nameContext = this.findNameNearEmail(
+              capturedApiResponses,
+              email
+            );
 
             // Only add if it passes email validation
             if (this.isValidEmail(email)) {
@@ -277,22 +291,33 @@ export class PlaywrightScraper {
       }
 
       // Filter out duplicate emails
-      const uniqueEmails = new Map<string, ScrapedContact>();
-      allContacts.forEach((contact) => {
-        if (contact.email && this.isValidEmail(contact.email)) {
-          const normalizedEmail = contact.email.toLowerCase().trim();
-          if (!uniqueEmails.has(normalizedEmail)) {
-            uniqueEmails.set(normalizedEmail, contact);
-          }
-        }
-      });
+      const uniqueContacts = this.removeDuplicateContacts(allContacts);
 
-      const finalContacts = Array.from(uniqueEmails.values());
-      console.log(`Playwright found ${finalContacts.length} contacts`);
-      return finalContacts;
+      // Return the full ScrapingResult object
+      return {
+        url: url,
+        contacts: uniqueContacts,
+        timestamp: new Date().toISOString(),
+        status: uniqueContacts.length > 0 ? "success" : "partial", // Simplified status
+        apiResponses: capturedApiResponses, // Include captured responses
+        stats: {
+          totalEmails: uniqueContacts.length,
+          totalWithNames: uniqueContacts.filter((c) => c.name).length,
+          pagesScraped: visitedUrls.size,
+        },
+      };
     } catch (error) {
-      console.error("Error in scrapeWebsite:", error);
-      return allContacts;
+      console.error("Playwright scraping error:", error);
+      // Return an error result
+      return {
+        url: url,
+        contacts: [],
+        timestamp: new Date().toISOString(),
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "Unknown Playwright error",
+        apiResponses: [], // Ensure apiResponses is always defined
+      };
     } finally {
       await this.close();
     }
@@ -382,89 +407,26 @@ export class PlaywrightScraper {
   private extractEncodedEmails(
     responses: { url: string; content: string }[]
   ): string[] {
-    const emails: string[] = [];
+    const allText = responses.map((r) => r.content).join("\n");
+    const decodedEmails: string[] = [];
+    const emailRegex = /"email"\s*:\s*"([^"]+)"/gi;
 
-    // Regex patterns for different encoding schemes
-    const patterns = [
-      // Standard email format
-      /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g,
-
-      // Common email encoding patterns
-      /data-email="([^"]+)"/g,
-      /data-cfemail="([^"]+)"/g,
-      /class="__cf_email__[^>]+data-cfemail="([^"]+)"/g,
-
-      // WordPress Email Encoder Bundle
-      /\*protected email\*.*?([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g,
-
-      // Look for HTML entities encoded emails
-      /&#(\d+);&#(\d+);&#(\d+);/g,
-
-      // More comprehensive JavaScript-based email pattern
-      /['"]([\w\.-]+@[\w\.-]+\.\w+)['"]/g,
-
-      // Common pattern for email addresses in JS variables
-      /[\w]+\s*[:=]\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
-
-      // Email in structured data
-      /"email"\s*:\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
-
-      // Contact patterns in various formats
-      /"contact"\s*:\s*['"]([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)['"]/g,
-    ];
-
-    for (const response of responses) {
-      for (const pattern of patterns) {
-        const matches = response.content.match(pattern);
-        if (matches) {
-          for (const match of matches) {
-            // Clean the match to get just the email
-            const emailMatch = match.match(
-              /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/
-            );
-            if (emailMatch && emailMatch[1]) {
-              const email = emailMatch[1].toLowerCase();
-              if (!emails.includes(email)) {
-                emails.push(email);
-              }
-            }
-          }
-        }
-      }
-
-      // Special handling for San Diego Hosers and similar sites
-      if (
-        response.url.includes("/contact/") &&
-        response.content.includes("*protected email*")
-      ) {
-        const emailLines = response.content.split("\n");
-        for (let i = 0; i < emailLines.length; i++) {
-          if (emailLines[i].includes("*protected email*")) {
-            // Check a few lines before this for an email
-            for (let j = Math.max(0, i - 5); j < i; j++) {
-              const emailMatch = emailLines[j].match(
-                /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/
-              );
-              if (emailMatch && emailMatch[1]) {
-                const email = emailMatch[1].toLowerCase();
-                if (!emails.includes(email)) {
-                  emails.push(email);
-                }
-              }
-            }
-          }
-        }
+    let match;
+    while ((match = emailRegex.exec(allText)) !== null) {
+      const email = match[1].toLowerCase();
+      if (!decodedEmails.includes(email)) {
+        decodedEmails.push(email);
       }
     }
 
-    return emails;
+    return decodedEmails;
   }
 
   /**
    * Find name context near an email address
    */
   private findNameNearEmail(
-    responses: { url: string; content: string }[],
+    responses: ApiResponse[],
     email: string
   ): string | null {
     for (const response of responses) {
@@ -711,5 +673,28 @@ export class PlaywrightScraper {
     );
 
     return links.filter((link): link is string => typeof link === "string");
+  }
+
+  private removeDuplicateContacts(
+    contacts: ScrapedContact[]
+  ): ScrapedContact[] {
+    const uniqueEmails = new Set<string>();
+    const uniqueContacts: ScrapedContact[] = [];
+
+    for (const contact of contacts) {
+      // Ensure email exists and is a string before processing
+      if (contact.email && typeof contact.email === "string") {
+        const lowerEmail = contact.email.toLowerCase();
+        if (!uniqueEmails.has(lowerEmail)) {
+          uniqueEmails.add(lowerEmail);
+          uniqueContacts.push(contact);
+        }
+      } else {
+        // Log contacts with missing or invalid emails
+        console.warn("Skipping contact with invalid email:", contact);
+      }
+    }
+
+    return uniqueContacts;
   }
 }

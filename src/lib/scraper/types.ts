@@ -15,6 +15,14 @@ export interface ScrapedContact {
   method?: string; // Method used to find this email (e.g., "Contact Page", "Main Page", "Contact Page Mailto Link")
 }
 
+// Type for captured API responses during dynamic scraping
+export interface ApiResponse {
+  url: string;
+  content: string;
+  contentType: string;
+}
+
+// Represents the overall result of a scraping operation
 export interface ScrapingResult {
   url: string;
   contacts: ScrapedContact[];
@@ -26,6 +34,7 @@ export interface ScrapingResult {
     totalWithNames: number;
     pagesScraped: number;
   };
+  apiResponses?: ApiResponse[]; // Use the defined ApiResponse type
 }
 
 export interface FormField {
