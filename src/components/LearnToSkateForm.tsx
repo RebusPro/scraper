@@ -126,11 +126,11 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
   };
 
   return (
-    <div className="bg-gray-800 shadow-md rounded px-8 pt-6 pb-8 mb-4">
-      <h2 className="text-xl font-bold mb-4">
+    <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg px-8 pt-6 pb-8 mb-4">
+      <h2 className="text-xl font-bold mb-4 text-gray-800 dark:text-white">
         Learn to Skate USA Program Finder
       </h2>
-      <p className="mb-4 text-gray-600">
+      <p className="mb-4 text-gray-600 dark:text-gray-300">
         This specialized form directly searches the Learn to Skate USA database
         for skating programs and their contact information.
       </p>
@@ -138,14 +138,14 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
       <form onSubmit={handleSubmit}>
         <div className="mb-4">
           <label
-            className="block text-gray-700 text-sm font-bold mb-2"
+            className="block text-gray-700 dark:text-gray-300 text-sm font-bold mb-2"
             htmlFor="state"
           >
             State
           </label>
           <select
             id="state"
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 dark:text-white dark:bg-gray-700 dark:border-gray-600 leading-tight focus:outline-none focus:shadow-outline"
             value={state}
             onChange={(e) => setState(e.target.value)}
           >
@@ -159,7 +159,7 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
 
         <div className="mb-4">
           <label
-            className="block text-gray-700 text-sm font-bold mb-2"
+            className="block text-gray-700 dark:text-gray-300 text-sm font-bold mb-2"
             htmlFor="zipCode"
           >
             Zip Code (optional)
@@ -167,7 +167,7 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
           <input
             id="zipCode"
             type="text"
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 dark:text-white dark:bg-gray-700 dark:border-gray-600 leading-tight focus:outline-none focus:shadow-outline"
             value={zipCode}
             onChange={(e) => setZipCode(e.target.value)}
             placeholder="e.g. 10001"
@@ -176,7 +176,7 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
 
         <div className="mb-4">
           <label
-            className="block text-gray-700 text-sm font-bold mb-2"
+            className="block text-gray-700 dark:text-gray-300 text-sm font-bold mb-2"
             htmlFor="programName"
           >
             Program Name (optional)
@@ -184,7 +184,7 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
           <input
             id="programName"
             type="text"
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 dark:text-white dark:bg-gray-700 dark:border-gray-600 leading-tight focus:outline-none focus:shadow-outline"
             value={programName}
             onChange={(e) => setProgramName(e.target.value)}
             placeholder="e.g. Ice Center"
@@ -192,7 +192,7 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
+          <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded">
             {error}
           </div>
         )}
@@ -200,7 +200,7 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
         <div className="flex items-center justify-between">
           <button
             type="submit"
-            className={`bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline ${
+            className={`bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition ${
               isLoading ? "opacity-50 cursor-not-allowed" : ""
             }`}
             disabled={isLoading}
