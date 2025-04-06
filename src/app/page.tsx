@@ -564,9 +564,9 @@ export default function Home() {
                 Upload Your Website List
               </h2>
               <p className="text-sm text-gray-600 dark:text-gray-300">
-                Upload an Excel file with coaching websites to scrape or paste
-                URLs directly. Our system will automatically extract all
-                available contact information.
+                Upload an Excel file with websites to scrape or paste URLs
+                directly. The system will automatically extract all available
+                contact information.
               </p>
             </div>
 

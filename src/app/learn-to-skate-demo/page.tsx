@@ -10,17 +10,20 @@ import LearnToSkateForm from "@/components/LearnToSkateForm";
 
 export default function LearnToSkateDemoPage() {
   const [contacts, setContacts] = useState<ScrapedContact[]>([]);
-  const [programs, setPrograms] = useState<any[]>([]);
+  const [programs, setPrograms] = useState<unknown[]>([]);
   const [isShowingRaw, setIsShowingRaw] = useState(false);
 
-  const handleResults = (newContacts: ScrapedContact[], rawPrograms: any[]) => {
+  const handleResults = (
+    newContacts: ScrapedContact[],
+    rawPrograms: unknown[]
+  ) => {
     setContacts(newContacts);
     setPrograms(rawPrograms);
   };
 
   return (
-    <div className="container mx-auto p-4 max-w-5xl">
-      <div className="bg-blue-50 p-6 mb-8 rounded-lg border border-blue-200">
+    <div className="container mx-auto p-4 max-w-5xl bg-gray-900">
+      <div className="bg-gray-800 p-6 mb-8 rounded-lg border border-blue-200">
         <h1 className="text-3xl font-bold mb-4 text-blue-800">
           Learn to Skate USA Contact Finder
         </h1>
@@ -42,7 +45,7 @@ export default function LearnToSkateDemoPage() {
 
         <div className="md:col-span-2">
           {contacts.length > 0 ? (
-            <div className="bg-white shadow-md rounded p-6">
+            <div className="bg-gray-800 shadow-md rounded p-6">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-bold">Results</h2>
                 <div className="flex items-center">
@@ -58,7 +61,7 @@ export default function LearnToSkateDemoPage() {
               {isShowingRaw ? (
                 <div className="mt-4">
                   <h3 className="font-semibold mb-2">Raw Program Data:</h3>
-                  <pre className="bg-gray-100 p-4 rounded overflow-auto max-h-[500px] text-sm">
+                  <pre className="bg-gray-800 p-4 rounded overflow-auto max-h-[500px] text-sm">
                     {JSON.stringify(programs, null, 2)}
                   </pre>
                 </div>
@@ -93,7 +96,7 @@ export default function LearnToSkateDemoPage() {
               )}
             </div>
           ) : (
-            <div className="bg-gray-50 rounded-lg p-8 text-center flex items-center justify-center h-full">
+            <div className="bg-gray-800 rounded-lg p-8 text-center flex items-center justify-center h-full">
               <div>
                 <h3 className="text-lg font-medium text-gray-500 mb-2">
                   No results yet
@@ -107,7 +110,7 @@ export default function LearnToSkateDemoPage() {
         </div>
       </div>
 
-      <div className="mt-12 bg-gray-50 p-6 rounded-lg">
+      <div className="mt-12 bg-gray-800 p-6 rounded-lg">
         <h2 className="text-xl font-bold mb-4">How It Works</h2>
         <p className="mb-4">
           This specialized tool bypasses the limitations of traditional web
