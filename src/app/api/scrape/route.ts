@@ -227,11 +227,31 @@ async function processScraping(
       );
 
       // Determine scraping strategy based on URL and mode
-      let contacts: ScrapedContact[] = [];
       const pagesScraped = 1;
 
       // Use the scraper's scrapeWebsite method which handles everything
-      contacts = await scraper.scrapeWebsite(url, modeSettings);
+      const scrapedData = await scraper.scrapeWebsite(url, modeSettings);
+
+      // Ensure the result is the expected contact array type
+      if (!Array.isArray(scrapedData)) {
+        // Handle the unexpected ScrapingResult return type.
+        // Log the situation and throw an error to be caught by the outer catch block.
+        console.error(
+          `scrapeWebsite for ${url} returned unexpected type ScrapingResult:`,
+          scrapedData
+        );
+        throw new Error(
+          typeof scrapedData === "object" &&
+          scrapedData !== null &&
+          "message" in scrapedData &&
+          typeof scrapedData.message === "string"
+            ? scrapedData.message
+            : `Scraping failed for ${url}, unexpected return type.`
+        );
+      }
+
+      // Now we know scrapedData is ScrapedContact[]
+      const contacts: ScrapedContact[] = scrapedData;
 
       // Add to results
       const result: ScrapingResult = {
