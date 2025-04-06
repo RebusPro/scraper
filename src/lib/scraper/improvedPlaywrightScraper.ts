@@ -4,8 +4,9 @@
  */
 import { ScrapedContact, ScrapingOptions } from "./types";
 import { extractEmails, processContactData } from "./emailExtractor";
-import { chromium, firefox, Browser } from "playwright";
+import { chromium as playwrightChromium, Browser } from "playwright";
 import { extractObfuscatedEmails } from "./enhancedEmailExtractor";
+import chromium from "@sparticuz/chromium";
 
 export class ImprovedPlaywrightScraper {
   private browser: Browser | null = null;
@@ -28,7 +29,6 @@ export class ImprovedPlaywrightScraper {
     options: ScrapingOptions = {}
   ): Promise<ScrapedContact[]> {
     // Set defaults
-    const useHeadless = options.useHeadless ?? true;
     const mode = options.mode ?? "standard";
     const timeout = options.timeout ?? 20000; // Reduced timeout for faster performance
 
@@ -71,14 +71,33 @@ export class ImprovedPlaywrightScraper {
     try {
       // Create browser if not already created
       if (!this.browser) {
-        console.log(
-          `Launching new ${
-            options.browserType || "chromium"
-          } browser for scraping`
-        );
-        this.browser = await (options.browserType === "firefox"
-          ? firefox.launch({ headless: useHeadless })
-          : chromium.launch({ headless: useHeadless }));
+        let launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
+          headless: options.useHeadless ?? true, // Respect option locally, default true
+        };
+
+        if (process.env.VERCEL === "1") {
+          console.log(
+            "Vercel environment detected. Launching Playwright Chromium with @sparticuz/chromium..."
+          );
+          const executablePath = await chromium.executablePath();
+          if (!executablePath) {
+            throw new Error(
+              "Could not find Chromium executable via @sparticuz/chromium. Check Vercel deployment."
+            );
+          }
+          launchOptions = {
+            args: chromium.args,
+            executablePath: executablePath,
+            headless: true, // Force headless on Vercel
+          };
+        } else {
+          console.log(
+            "Local environment detected. Launching Playwright Chromium with default settings..."
+          );
+          // No specific executablePath needed locally, Playwright finds its cache
+        }
+
+        this.browser = await playwrightChromium.launch(launchOptions);
       }
 
       // Create context with default configuration
@@ -613,85 +632,208 @@ export class ImprovedPlaywrightScraper {
     url: string,
     timeout: number
   ): Promise<ScrapedContact[]> {
-    console.log(`Fast extraction for ${url}`);
+    let browser: Browser | null = null;
     const contacts: ScrapedContact[] = [];
 
     try {
-      // Launch minimal browser
-      const browser = await chromium.launch({
-        headless: true,
-        args: [
-          "--disable-extensions",
-          "--disable-gpu",
-          "--disable-dev-shm-usage",
-        ], // Disable features for speed
+      console.log(`Executing fast extraction for: ${url}`);
+      let launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
+        headless: true, // Fast extraction likely always headless
+      };
+
+      if (process.env.VERCEL === "1") {
+        console.log(
+          "Vercel environment detected. Launching Playwright Chromium with @sparticuz/chromium for fast extraction..."
+        );
+        const executablePath = await chromium.executablePath();
+        if (!executablePath) {
+          throw new Error(
+            "Could not find Chromium executable via @sparticuz/chromium. Check Vercel deployment."
+          );
+        }
+        launchOptions = {
+          args: chromium.args,
+          executablePath: executablePath,
+          headless: true, // Force headless on Vercel
+        };
+      } else {
+        console.log(
+          "Local environment detected. Launching Playwright Chromium with default settings for fast extraction..."
+        );
+        // No specific executablePath needed locally
+      }
+
+      browser = await playwrightChromium.launch(launchOptions);
+
+      const context = await browser.newContext({
+        javaScriptEnabled: false,
       });
 
-      try {
-        const context = await browser.newContext({
-          userAgent:
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
-          viewport: { width: 1280, height: 800 },
-          javaScriptEnabled: true,
+      // Disable resource loading for speed
+      await context.route(
+        "**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,otf}",
+        (route) => route.abort()
+      );
+
+      const page = await context.newPage();
+
+      // Set very short timeout
+      page.setDefaultTimeout(timeout);
+
+      // Navigate with minimal waiting
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+
+      // Use multiple extraction techniques for better results
+
+      // 1. Get all emails from HTML content
+      const emails = await page.evaluate(() => {
+        const email_regex =
+          /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+        const html = document.documentElement.innerHTML;
+        const matches = html.match(email_regex) || [];
+
+        // Look for organizational emails which are common in directories
+        const orgMatches: string[] = [];
+        if (html.includes("info@")) {
+          const infoMatches =
+            html.match(/info@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+          orgMatches.push(...infoMatches);
+        }
+        if (html.includes("contact@")) {
+          const contactMatches =
+            html.match(/contact@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
+          orgMatches.push(...contactMatches);
+        }
+
+        // Look for emails in data attributes which may hold contact info
+        const dataEmails: string[] = [];
+        const elements = document.querySelectorAll(
+          "[data-email], [data-contact], [data-mail]"
+        );
+        elements.forEach((el) => {
+          const dataValue =
+            el.getAttribute("data-email") ||
+            el.getAttribute("data-contact") ||
+            el.getAttribute("data-mail");
+          if (dataValue && dataValue.includes("@") && dataValue.includes(".")) {
+            dataEmails.push(dataValue);
+          }
         });
 
-        // Disable resource loading for speed
-        await context.route(
-          "**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,otf}",
-          (route) => route.abort()
-        );
+        // Filter out package names, tracking IDs, etc. directly in the browser context
+        return [...new Set([...matches, ...orgMatches, ...dataEmails])]
+          .filter((email) => {
+            // Basic validation
+            if (
+              !email.includes("@") ||
+              !email.includes(".") ||
+              email.length < 6
+            )
+              return false;
 
-        const page = await context.newPage();
+            // Filter out common package references
+            if (
+              email.includes("-js@") ||
+              email.includes("-bundle@") ||
+              email.includes("-polyfill@") ||
+              email.includes("react@") ||
+              email.includes("react-dom@") ||
+              email.includes("lodash@") ||
+              email.includes("jquery@")
+            )
+              return false;
 
-        // Set very short timeout
-        page.setDefaultTimeout(timeout);
+            // Filter out Wix and Sentry tracking emails
+            if (
+              email.includes("@sentry") ||
+              email.includes("wixpress.com") ||
+              email.endsWith("wix.com") ||
+              /[a-f0-9]{24,}@/.test(email)
+            )
+              return false;
 
-        // Navigate with minimal waiting
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout });
+            // Filter out GPS coordinates (like /@33.6025076)
+            if (
+              email.startsWith("/@") ||
+              /\/@\d+\.\d+/.test(email) ||
+              /^@\d+\.\d+/.test(email)
+            )
+              return false;
 
-        // Use multiple extraction techniques for better results
+            // Filter out version numbers
+            if (/^[a-zA-Z0-9_-]+@\d+\.\d+\.\d+$/.test(email)) return false;
 
-        // 1. Get all emails from HTML content
-        const emails = await page.evaluate(() => {
+            return true;
+          })
+          .map((email) => {
+            // Clean any URL encoding in the email
+            try {
+              // Try to decode if it contains URL encoding
+              if (email.includes("%")) {
+                return decodeURIComponent(email);
+              }
+            } catch {}
+
+            // Remove any remaining %20 (encoded spaces)
+            return email.replace(/%20/g, "").trim();
+          });
+      });
+
+      // Add found emails to contacts
+      for (const email of emails) {
+        contacts.push({
+          email,
+          source: url,
+          confidence: "Confirmed",
+          method: "Quick Scan",
+        });
+      }
+
+      // Check for mailto: links which are often overlooked
+      const mailtoLinks = await page.evaluate(() => {
+        const links = document.querySelectorAll('a[href^="mailto:"]');
+        const emails: string[] = [];
+
+        links.forEach((link) => {
+          const href = link.getAttribute("href");
+          if (href) {
+            const email = href.replace("mailto:", "").split("?")[0].trim();
+            if (email && email.includes("@")) {
+              emails.push(email);
+            }
+          }
+        });
+
+        return emails;
+      });
+
+      // Add mailto emails to contacts with high confidence
+      for (const email of mailtoLinks) {
+        if (!contacts.some((c) => c.email === email)) {
+          contacts.push({
+            email,
+            source: url,
+            confidence: "Confirmed",
+            method: "Quick Scan - Mailto Link",
+          });
+        }
+      }
+
+      // 2. If we didn't find enough emails, try scrolling to load more content
+      if (contacts.length < 2) {
+        console.log("Doing a quick scroll to find more content");
+        await page.evaluate(() => window.scrollBy(0, 2000));
+        await page.waitForTimeout(500);
+
+        // Try extracting emails again after scrolling
+        const scrollEmails = await page.evaluate(() => {
           const email_regex =
             /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
           const html = document.documentElement.innerHTML;
           const matches = html.match(email_regex) || [];
 
-          // Look for organizational emails which are common in directories
-          const orgMatches: string[] = [];
-          if (html.includes("info@")) {
-            const infoMatches =
-              html.match(/info@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
-            orgMatches.push(...infoMatches);
-          }
-          if (html.includes("contact@")) {
-            const contactMatches =
-              html.match(/contact@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
-            orgMatches.push(...contactMatches);
-          }
-
-          // Look for emails in data attributes which may hold contact info
-          const dataEmails: string[] = [];
-          const elements = document.querySelectorAll(
-            "[data-email], [data-contact], [data-mail]"
-          );
-          elements.forEach((el) => {
-            const dataValue =
-              el.getAttribute("data-email") ||
-              el.getAttribute("data-contact") ||
-              el.getAttribute("data-mail");
-            if (
-              dataValue &&
-              dataValue.includes("@") &&
-              dataValue.includes(".")
-            ) {
-              dataEmails.push(dataValue);
-            }
-          });
-
-          // Filter out package names, tracking IDs, etc. directly in the browser context
-          return [...new Set([...matches, ...orgMatches, ...dataEmails])]
+          // Apply the same filtering as the initial scan
+          return matches
             .filter((email) => {
               // Basic validation
               if (
@@ -722,14 +864,6 @@ export class ImprovedPlaywrightScraper {
               )
                 return false;
 
-              // Filter out GPS coordinates (like /@33.6025076)
-              if (
-                email.startsWith("/@") ||
-                /\/@\d+\.\d+/.test(email) ||
-                /^@\d+\.\d+/.test(email)
-              )
-                return false;
-
               // Filter out version numbers
               if (/^[a-zA-Z0-9_-]+@\d+\.\d+\.\d+$/.test(email)) return false;
 
@@ -738,277 +872,172 @@ export class ImprovedPlaywrightScraper {
             .map((email) => {
               // Clean any URL encoding in the email
               try {
-                // Try to decode if it contains URL encoding
                 if (email.includes("%")) {
                   return decodeURIComponent(email);
                 }
               } catch {}
-
-              // Remove any remaining %20 (encoded spaces)
               return email.replace(/%20/g, "").trim();
             });
         });
 
-        // Add found emails to contacts
-        for (const email of emails) {
-          contacts.push({
-            email,
-            source: url,
-            confidence: "Confirmed",
-            method: "Quick Scan",
-          });
-        }
-
-        // Check for mailto: links which are often overlooked
-        const mailtoLinks = await page.evaluate(() => {
-          const links = document.querySelectorAll('a[href^="mailto:"]');
-          const emails: string[] = [];
-
-          links.forEach((link) => {
-            const href = link.getAttribute("href");
-            if (href) {
-              const email = href.replace("mailto:", "").split("?")[0].trim();
-              if (email && email.includes("@")) {
-                emails.push(email);
-              }
-            }
-          });
-
-          return emails;
-        });
-
-        // Add mailto emails to contacts with high confidence
-        for (const email of mailtoLinks) {
+        for (const email of scrollEmails) {
           if (!contacts.some((c) => c.email === email)) {
             contacts.push({
               email,
               source: url,
               confidence: "Confirmed",
-              method: "Quick Scan - Mailto Link",
+              method: "Quick Scan - Scroll",
             });
           }
         }
+      }
 
-        // 2. If we didn't find enough emails, try scrolling to load more content
-        if (contacts.length < 2) {
-          console.log("Doing a quick scroll to find more content");
-          await page.evaluate(() => window.scrollBy(0, 2000));
-          await page.waitForTimeout(500);
+      // 3. Quickly look for contact page links if we still need more emails
+      if (contacts.length < 2) {
+        console.log("Looking for contact page links");
 
-          // Try extracting emails again after scrolling
-          const scrollEmails = await page.evaluate(() => {
-            const email_regex =
-              /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
-            const html = document.documentElement.innerHTML;
-            const matches = html.match(email_regex) || [];
+        // See if we can find any contact page links - expanded selectors
+        const contactLinks = await page.$$(
+          `a[href*="contact"], 
+          a[href*="kontakt"], 
+          a[href*="about-us"], 
+          a[href*="about"], 
+          a[href*="team"], 
+          a[href*="get-in-touch"], 
+          a[href*="connect"], 
+          a[href*="email"], 
+          a[href*="mail"], 
+          a[href*="join"],
+          a[href="/contact"], 
+          a[href="/about"], 
+          a[href="/contact-us"],
+          header a[href*="contact"], 
+          footer a[href*="contact"],
+          .menu a[href*="contact"], 
+          .navigation a[href*="contact"], 
+          .nav a[href*="contact"]`
+        );
 
-            // Apply the same filtering as the initial scan
-            return matches
-              .filter((email) => {
-                // Basic validation
-                if (
-                  !email.includes("@") ||
-                  !email.includes(".") ||
-                  email.length < 6
-                )
-                  return false;
+        if (contactLinks.length > 0) {
+          try {
+            // Just click the first contact link we find
+            await contactLinks[0].click();
+            await page.waitForTimeout(1000);
 
-                // Filter out common package references
-                if (
-                  email.includes("-js@") ||
-                  email.includes("-bundle@") ||
-                  email.includes("-polyfill@") ||
-                  email.includes("react@") ||
-                  email.includes("react-dom@") ||
-                  email.includes("lodash@") ||
-                  email.includes("jquery@")
-                )
-                  return false;
+            // Look for emails on the contact page
+            const contactEmails = await page.evaluate(() => {
+              const email_regex =
+                /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+              const html = document.documentElement.innerHTML;
 
-                // Filter out Wix and Sentry tracking emails
-                if (
-                  email.includes("@sentry") ||
-                  email.includes("wixpress.com") ||
-                  email.endsWith("wix.com") ||
-                  /[a-f0-9]{24,}@/.test(email)
-                )
-                  return false;
+              // Apply our standard filtering
+              return (html.match(email_regex) || [])
+                .filter((email) => {
+                  // Basic validation
+                  if (
+                    !email.includes("@") ||
+                    !email.includes(".") ||
+                    email.length < 6
+                  )
+                    return false;
 
-                // Filter out version numbers
-                if (/^[a-zA-Z0-9_-]+@\d+\.\d+\.\d+$/.test(email)) return false;
+                  // Filter out common package references
+                  if (
+                    email.includes("-js@") ||
+                    email.includes("-bundle@") ||
+                    email.includes("-polyfill@") ||
+                    email.includes("react@") ||
+                    email.includes("react-dom@") ||
+                    email.includes("lodash@") ||
+                    email.includes("jquery@")
+                  )
+                    return false;
 
-                return true;
-              })
-              .map((email) => {
-                // Clean any URL encoding in the email
-                try {
-                  if (email.includes("%")) {
-                    return decodeURIComponent(email);
-                  }
-                } catch {}
-                return email.replace(/%20/g, "").trim();
-              });
-          });
+                  // Filter out Wix and Sentry tracking emails
+                  if (
+                    email.includes("@sentry") ||
+                    email.includes("wixpress.com") ||
+                    email.endsWith("wix.com") ||
+                    /[a-f0-9]{24,}@/.test(email)
+                  )
+                    return false;
 
-          for (const email of scrollEmails) {
-            if (!contacts.some((c) => c.email === email)) {
-              contacts.push({
-                email,
-                source: url,
-                confidence: "Confirmed",
-                method: "Quick Scan - Scroll",
-              });
-            }
-          }
-        }
+                  // Filter out GPS coordinates (like /@33.6025076)
+                  if (
+                    email.startsWith("/@") ||
+                    /\/@\d+\.\d+/.test(email) ||
+                    /^@\d+\.\d+/.test(email)
+                  )
+                    return false;
 
-        // 3. Quickly look for contact page links if we still need more emails
-        if (contacts.length < 2) {
-          console.log("Looking for contact page links");
+                  // Filter out version numbers
+                  if (/^[a-zA-Z0-9_-]+@\d+\.\d+\.\d+$/.test(email))
+                    return false;
 
-          // See if we can find any contact page links - expanded selectors
-          const contactLinks = await page.$$(
-            `a[href*="contact"], 
-            a[href*="kontakt"], 
-            a[href*="about-us"], 
-            a[href*="about"], 
-            a[href*="team"], 
-            a[href*="get-in-touch"], 
-            a[href*="connect"], 
-            a[href*="email"], 
-            a[href*="mail"], 
-            a[href*="join"],
-            a[href="/contact"], 
-            a[href="/about"], 
-            a[href="/contact-us"],
-            header a[href*="contact"], 
-            footer a[href*="contact"],
-            .menu a[href*="contact"], 
-            .navigation a[href*="contact"], 
-            .nav a[href*="contact"]`
-          );
-
-          if (contactLinks.length > 0) {
-            try {
-              // Just click the first contact link we find
-              await contactLinks[0].click();
-              await page.waitForTimeout(1000);
-
-              // Look for emails on the contact page
-              const contactEmails = await page.evaluate(() => {
-                const email_regex =
-                  /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
-                const html = document.documentElement.innerHTML;
-
-                // Apply our standard filtering
-                return (html.match(email_regex) || [])
-                  .filter((email) => {
-                    // Basic validation
-                    if (
-                      !email.includes("@") ||
-                      !email.includes(".") ||
-                      email.length < 6
-                    )
-                      return false;
-
-                    // Filter out common package references
-                    if (
-                      email.includes("-js@") ||
-                      email.includes("-bundle@") ||
-                      email.includes("-polyfill@") ||
-                      email.includes("react@") ||
-                      email.includes("react-dom@") ||
-                      email.includes("lodash@") ||
-                      email.includes("jquery@")
-                    )
-                      return false;
-
-                    // Filter out Wix and Sentry tracking emails
-                    if (
-                      email.includes("@sentry") ||
-                      email.includes("wixpress.com") ||
-                      email.endsWith("wix.com") ||
-                      /[a-f0-9]{24,}@/.test(email)
-                    )
-                      return false;
-
-                    // Filter out GPS coordinates (like /@33.6025076)
-                    if (
-                      email.startsWith("/@") ||
-                      /\/@\d+\.\d+/.test(email) ||
-                      /^@\d+\.\d+/.test(email)
-                    )
-                      return false;
-
-                    // Filter out version numbers
-                    if (/^[a-zA-Z0-9_-]+@\d+\.\d+\.\d+$/.test(email))
-                      return false;
-
-                    return true;
-                  })
-                  .map((email) => {
-                    // Clean any URL encoding in the email
-                    try {
-                      if (email.includes("%")) {
-                        return decodeURIComponent(email);
-                      }
-                    } catch {}
-                    return email.replace(/%20/g, "").trim();
-                  });
-              });
-
-              // Add any new emails we found
-              for (const email of contactEmails) {
-                if (!contacts.some((c) => c.email === email)) {
-                  contacts.push({
-                    email,
-                    source: url,
-                    confidence: "Confirmed",
-                    method: "Quick Scan - Contact Page",
-                  });
-                }
-              }
-
-              // Also check for mailto: links on contact page
-              const contactMailtoLinks = await page.evaluate(() => {
-                const links = document.querySelectorAll('a[href^="mailto:"]');
-                const emails: string[] = [];
-                links.forEach((link) => {
-                  const href = link.getAttribute("href");
-                  if (href) {
-                    const email = href
-                      .replace("mailto:", "")
-                      .split("?")[0]
-                      .trim();
-                    if (email && email.includes("@")) {
-                      emails.push(email);
+                  return true;
+                })
+                .map((email) => {
+                  // Clean any URL encoding in the email
+                  try {
+                    if (email.includes("%")) {
+                      return decodeURIComponent(email);
                     }
-                  }
+                  } catch {}
+                  return email.replace(/%20/g, "").trim();
                 });
-                return emails;
-              });
+            });
 
-              // Add contact page mailto links with highest confidence
-              for (const email of contactMailtoLinks) {
-                if (!contacts.some((c) => c.email === email)) {
-                  contacts.push({
-                    email,
-                    source: url,
-                    confidence: "Confirmed",
-                    method: "Quick Scan - Contact Page Mailto",
-                  });
-                }
+            // Add any new emails we found
+            for (const email of contactEmails) {
+              if (!contacts.some((c) => c.email === email)) {
+                contacts.push({
+                  email,
+                  source: url,
+                  confidence: "Confirmed",
+                  method: "Quick Scan - Contact Page",
+                });
               }
-            } catch (error) {
-              console.log("Error following contact link:", error);
             }
+
+            // Also check for mailto: links on contact page
+            const contactMailtoLinks = await page.evaluate(() => {
+              const links = document.querySelectorAll('a[href^="mailto:"]');
+              const emails: string[] = [];
+              links.forEach((link) => {
+                const href = link.getAttribute("href");
+                if (href) {
+                  const email = href
+                    .replace("mailto:", "")
+                    .split("?")[0]
+                    .trim();
+                  if (email && email.includes("@")) {
+                    emails.push(email);
+                  }
+                }
+              });
+              return emails;
+            });
+
+            // Add contact page mailto links with highest confidence
+            for (const email of contactMailtoLinks) {
+              if (!contacts.some((c) => c.email === email)) {
+                contacts.push({
+                  email,
+                  source: url,
+                  confidence: "Confirmed",
+                  method: "Quick Scan - Contact Page Mailto",
+                });
+              }
+            }
+          } catch (error) {
+            console.log("Error following contact link:", error);
           }
         }
-      } finally {
+      }
+    } finally {
+      if (browser) {
         await browser.close();
       }
-    } catch (error) {
-      console.error("Error in fast extraction:", error);
     }
 
     console.log(`Fast extraction complete: found ${contacts.length} contacts`);
