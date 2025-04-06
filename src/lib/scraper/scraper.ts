@@ -3,7 +3,8 @@
  */
 import axios from "axios";
 import * as cheerio from "cheerio";
-import puppeteer from "puppeteer";
+import puppeteerCore, { Protocol } from "puppeteer-core"; // For Vercel + Protocol type
+import puppeteerFull from "puppeteer"; // For Local development
 import { extractEmails, processContactData } from "./emailExtractor";
 import { extractDataFromJson } from "./jsonExtractor";
 import {
@@ -13,6 +14,7 @@ import {
   ApiResponse,
 } from "./types";
 import { PlaywrightScraper } from "./playwrightScraper";
+import chromium from "@sparticuz/chromium";
 
 export class WebScraper {
   private defaultOptions: ScrapingOptions = {
@@ -299,29 +301,53 @@ export class WebScraper {
     contacts: ScrapedContact[];
     apiResponses: ApiResponse[];
   }> {
-    let browser;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let browser: any; // Use any as pragmatic solution for type diffs
     try {
-      // Launch headless browser with additional settings to avoid detection
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--disable-gpu",
-          "--window-size=1920,1080",
-          // Disable WebDriver flag to avoid detection
-          "--disable-blink-features=AutomationControlled",
-          // Additional flags to bypass detection
-          "--disable-features=IsolateOrigins,site-per-process",
-          "--disable-web-security",
-          "--ignore-certificate-errors",
-        ],
-        // Slow down by 50ms to appear more human-like
-        slowMo: 50,
-        // TypeScript doesn't recognize ignoreHTTPSErrors in this version
-      });
+      // Check if running on Vercel
+      if (process.env.VERCEL === "1") {
+        console.log(
+          "Vercel environment detected. Launching puppeteer-core with @sparticuz/chromium..."
+        );
+        const executablePath = await chromium.executablePath();
+
+        if (!executablePath) {
+          throw new Error(
+            "Could not find Chromium executable via @sparticuz/chromium. Ensure it's correctly deployed on Vercel."
+          );
+        }
+
+        const launchOptions = {
+          args: chromium.args,
+          defaultViewport: chromium.defaultViewport,
+          executablePath: executablePath,
+          headless: chromium.headless, // Use headless from sparticuz
+        };
+        browser = await puppeteerCore.launch(launchOptions);
+      } else {
+        console.log(
+          "Local environment detected. Launching Puppeteer with default settings..."
+        );
+        // Use the full puppeteer package locally, which manages its own browser download
+        const launchOptions = {
+          headless: true,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-accelerated-2d-canvas",
+            "--disable-gpu",
+            "--window-size=1920,1080",
+            "--disable-blink-features=AutomationControlled",
+          ],
+        };
+        browser = await puppeteerFull.launch(launchOptions);
+      }
+
+      // Ensure browser was launched successfully
+      if (!browser) {
+        throw new Error("Browser instance could not be launched.");
+      }
 
       // Open new page with DevTools opened (helps with capturing network requests)
       const page = await browser.newPage();
@@ -336,51 +362,57 @@ export class WebScraper {
       const networkResponseData: ApiResponse[] = [];
 
       // Listen for API response data with proper event
-      client.on("Network.responseReceived", async (event) => {
-        try {
-          const response = event.response;
-          const url = response.url;
+      client.on(
+        "Network.responseReceived",
+        async (event: Protocol.Network.ResponseReceivedEvent) => {
+          try {
+            const response = event.response;
+            const url = response.url;
 
-          // Look for API endpoints by common patterns
-          // This generic approach works for many sites that load data dynamically
-          if (
-            // Common API URL patterns
-            url.includes("/api/") ||
-            url.includes("/data/") ||
-            url.includes("/search") ||
-            url.includes("/find") ||
-            url.includes("json") ||
-            url.includes("list") ||
-            // Content types that likely contain data
-            response.mimeType.includes("json") ||
-            response.mimeType.includes("application/javascript") ||
-            // Any URL parameter that suggests data
-            url.includes("query=") ||
-            url.includes("q=") ||
-            url.includes("filter=") ||
-            url.includes("id=")
-          ) {
-            console.log(`Found potential API endpoint: ${url}`);
+            // Look for API endpoints by common patterns
+            // This generic approach works for many sites that load data dynamically
+            if (
+              // Common API URL patterns
+              url.includes("/api/") ||
+              url.includes("/data/") ||
+              url.includes("/search") ||
+              url.includes("/find") ||
+              url.includes("json") ||
+              url.includes("list") ||
+              // Content types that likely contain data
+              response.mimeType.includes("json") ||
+              response.mimeType.includes("application/javascript") ||
+              // Any URL parameter that suggests data
+              url.includes("query=") ||
+              url.includes("q=") ||
+              url.includes("filter=") ||
+              url.includes("id=")
+            ) {
+              console.log(`Found potential API endpoint: ${url}`);
 
-            // Get the response body
-            const responseBody = await client.send("Network.getResponseBody", {
-              requestId: event.requestId,
-            });
+              // Get the response body
+              const responseBody = await client.send(
+                "Network.getResponseBody",
+                {
+                  requestId: event.requestId,
+                }
+              );
 
-            // Store the response for later processing
-            if (responseBody && responseBody.body) {
-              networkResponseData.push({
-                url,
-                content: responseBody.body,
-                contentType: response.mimeType || "",
-              });
-              console.log(`Captured API data from: ${url}`);
+              // Store the response for later processing
+              if (responseBody && responseBody.body) {
+                networkResponseData.push({
+                  url,
+                  content: responseBody.body,
+                  contentType: response.mimeType || "",
+                });
+                console.log(`Captured API data from: ${url}`);
+              }
             }
+          } catch (error) {
+            console.warn("Error intercepting network response:", error);
           }
-        } catch (error) {
-          console.warn("Error intercepting network response:", error);
         }
-      });
+      );
 
       // Set a more realistic viewport
       await page.setViewport({
