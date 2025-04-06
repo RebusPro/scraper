@@ -1,141 +1,161 @@
 /**
- * API route specifically designed to handle the Learn to Skate USA website
- * Uses browser automation to handle cases where direct API calls are blocked
- */
+
+ * API route specifically designed to handle the Learn to Skate USA website
+
+ * Uses browser automation to handle cases where direct API calls are blocked
+
+ */
 
 import { FormField, WebScraper } from "@/lib/scraper";
+
 import { ScrapedContact } from "@/lib/scraper/types";
+
 import { NextRequest, NextResponse } from "next/server";
 
 // Type definitions for program information
+
 interface ProgramInfo {
   name: string;
+
   website: string;
+
   phone: string;
 }
 
 // Type for program info from page evaluation
+
 interface PageProgramInfo {
   name?: string;
+
   website?: string;
+
   phone?: string;
+
   email?: string;
 }
 
 // No need for this interface as we're using a more specific ApiResponse interface later
 
 // Type for program data from the API
+
 interface LearnToSkateProgram {
   // Known properties
-  Email?: string;
-  email?: string;
-  OrganizationName?: string;
-  FacilityName?: string;
-  Website?: string;
-  website?: string;
-  OrganizationPhoneNumber?: string;
-  Phone?: string;
 
-  // Allow other string properties for exploration
+  Email?: string;
+
+  email?: string;
+
+  OrganizationName?: string;
+
+  FacilityName?: string;
+
+  Website?: string;
+
+  website?: string;
+
+  OrganizationPhoneNumber?: string;
+
+  Phone?: string; // Allow other string properties for exploration
+
   [key: string]: string | number | boolean | null | undefined;
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { state, zipCode, programName } = await request.json();
+    const { state, zipCode, programName } = await request.json(); // Validate input
 
-    // Validate input
     if (!state && !zipCode) {
       return NextResponse.json(
         { error: "Either state or zip code is required" },
+
         { status: 400 }
       );
     }
 
     console.log(
       `Starting browser-based scraping for state=${state}, zipCode=${zipCode}`
-    );
+    ); // Create a form fields array with proper typing
 
-    // Create a form fields array with proper typing
     const formFields: FormField[] = [
       // State dropdown - always included
+
       {
         selector: "#mapStateId",
-        value: state,
-        type: "select",
-      },
 
-      // Zip radius - always included
+        value: state,
+
+        type: "select",
+      }, // Zip radius - always included
+
       {
         selector: "#zipSelect",
+
         value: "100", // 100 mile radius (maximum)
+
         type: "select",
       },
-    ];
+    ]; // Conditionally add zip code field if provided
 
-    // Conditionally add zip code field if provided
     if (zipCode) {
       formFields.push({
         selector: "#mapZipCode",
+
         value: zipCode,
+
         type: "text",
       });
-    }
+    } // Conditionally add program name field if provided
 
-    // Conditionally add program name field if provided
     if (programName) {
       formFields.push({
         selector: "#mapFacilityName",
+
         value: programName,
+
         type: "text",
       });
-    }
+    } // Configure the scraper
 
-    // Configure the scraper
     const scraper = new WebScraper({
       // Required for interactive websites
-      useHeadless: true,
 
-      // Configure form interaction specifically for Learn to Skate USA
+      useHeadless: true, // Configure form interaction specifically for Learn to Skate USA
+
       formInteraction: {
         enabled: true,
-        fields: formFields,
-        submitButtonSelector: "#searchProgramsSubmitBtn",
-        waitTime: 5000, // 5 seconds
-      },
 
-      // Enable following links for more contact info
+        fields: formFields,
+
+        submitButtonSelector: "#searchProgramsSubmitBtn",
+
+        waitTime: 5000, // 5 seconds
+      }, // Enable following links for more contact info
+
       followLinks: true,
+
       maxDepth: 2,
     });
 
     try {
       // Run the scraper on the Learn to Skate USA website
+
       const result = await scraper.scrapeWebsite(
         "https://www.learntoskateusa.com/findaskatingprogram/#mapListings"
       );
 
       console.log(
         `Browser-based scraping completed. Found ${result.contacts.length} contacts.`
-      );
+      ); // This map will hold our program information extracted from HTML
 
-      // This map will hold our program information extracted from HTML
-      const programsByEmail = new Map<string, ProgramInfo>();
+      const programsByEmail = new Map<string, ProgramInfo>(); // We'll focus on extracting program info directly from the API response // since that's where the accurate program names and websites come from // All HTML parsing logic was removed as it's not needed // Look for the Learn to Skate API response in the captured data // This is the key to solving this problem!
 
-      // We'll focus on extracting program info directly from the API response
-      // since that's where the accurate program names and websites come from
-      // All HTML parsing logic was removed as it's not needed
+      const resultObj = JSON.parse(JSON.stringify(result)); // Get the API responses that were captured during scraping
 
-      // Look for the Learn to Skate API response in the captured data
-      // This is the key to solving this problem!
-      const resultObj = JSON.parse(JSON.stringify(result));
+      const apiResponses = resultObj.apiResponses || []; // Find the Learn to Skate USA API response that contains program information
 
-      // Get the API responses that were captured during scraping
-      const apiResponses = resultObj.apiResponses || [];
-
-      // Find the Learn to Skate USA API response that contains program information
       interface ApiResponse {
         url?: string;
+
         content: string;
       }
 
@@ -147,174 +167,64 @@ export async function POST(request: NextRequest) {
       if (learnToSkateApiResponse) {
         try {
           // Parse the API response which contains program information
-          const apiData = JSON.parse(learnToSkateApiResponse.content);
 
-          // EMERGENCY FIX: Extract and log the actual API response structure
-          console.log("EMERGENCY: LEARN TO SKATE API RESPONSE STRUCTURE");
+          const apiData = JSON.parse(learnToSkateApiResponse.content); // EMERGENCY FIX: Extract and log the actual API response structure
 
-          // Dump all the properties for debugging
+          console.log("EMERGENCY: LEARN TO SKATE API RESPONSE STRUCTURE"); // Dump all the properties for debugging
+
           console.log("API Properties:");
+
           Object.keys(apiData).forEach((key) => {
             console.log(`apiData.${key} = ${typeof apiData[key]}`);
-          });
+          }); // Check if the API response contains program data
 
-          // Check if the API response contains program data
           if (apiData && apiData.programs && Array.isArray(apiData.programs)) {
             console.log(
               `Found ${apiData.programs.length} programs in API response`
-            );
+            ); // HARDCODED EXAMPLE: If programs array exists, log the EXACT structure of the first one
 
-            // HARDCODED EXAMPLE: If programs array exists, log the EXACT structure of the first one
             if (apiData.programs.length > 0) {
               const sampleProgram = apiData.programs[0];
+
               console.log("CRITICAL - EXACT PROGRAM FIELDS:");
+
               Object.keys(sampleProgram).forEach((field) => {
                 console.log(`${field}: ${sampleProgram[field]}`);
               });
-            }
+            } // Log the first program to see its actual structure
 
-            // Log the first program to see its actual structure
             if (apiData.programs.length > 0) {
               console.log("SAMPLE PROGRAM DATA:");
-              console.log(JSON.stringify(apiData.programs[0], null, 2));
-            }
 
-            // EMERGENCY FIX: Handle the specific case for Wind River Skate Club
+              console.log(JSON.stringify(apiData.programs[0], null, 2));
+            } // EMERGENCY FIX: Handle the specific case for Wind River Skate Club
+
             apiData.programs.forEach((program: LearnToSkateProgram) => {
               // Log the complete program data for each program to see what fields are available
+
               console.log(
                 "====================================================="
               );
+
               console.log(
                 `PROGRAM DATA FOR EMAIL: ${program.Email || "unknown email"}`
               );
+
               for (const key in program) {
                 console.log(`${key}: ${program[key]}`);
               }
+
               console.log(
                 "====================================================="
-              );
+              ); // Extract the email
 
-              // Extract the email
               const email = program.Email || program.email;
+
               if (email) {
                 // HARDCODED CASES based on the feedback
-                const lowerEmail = email.toLowerCase();
-
-                // SPECIAL CASE 1: Wind River
-                if (lowerEmail === "diane13@rocketmail.com") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Wind River Skate Club",
-                    website: "http://windriverskateclub.com",
-                    phone: String(program.PhoneNumber || "307-360-7697"),
-                  });
-                  console.log(
-                    "HARDCODED Wind River Skate Club for diane13@rocketmail.com"
-                  );
-                  return; // Skip the rest for this email
-                }
-
-                // SPECIAL CASE 2: Sheridan Ice
-                if (lowerEmail === "figure.skating@sheridanice.org") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Sheridan Ice",
-                    website: "https://www.sheridanice.org",
-                    phone: String(program.PhoneNumber || "307-674-9423"),
-                  });
-                  console.log("HARDCODED Sheridan Ice");
-                  return;
-                }
-
-                // SPECIAL CASE 3: City of Laramie
-                if (lowerEmail === "cboutelle@cityoflaramie.org") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "City of Laramie",
-                    website: "https://www.cityoflaramie.org",
-                    phone: String(program.PhoneNumber || "307-721-2161"),
-                  });
-                  console.log("HARDCODED City of Laramie");
-                  return;
-                }
-
-                // SPECIAL CASE 4: Cheyenne City
-                if (lowerEmail === "jgillotti@cheyennecity.org") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Cheyenne Ice and Events Center",
-                    website: "https://www.cheyennecity.org",
-                    phone: String(program.PhoneNumber || "307-262-6069"),
-                  });
-                  console.log("HARDCODED Cheyenne City");
-                  return;
-                }
-
-                // SPECIAL CASE 5: Learn to Skate USA
-                if (lowerEmail === "memberservices@learntoskateusa.com") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Learn to Skate USA",
-                    website: "https://www.learntoskateusa.com",
-                    phone: String(program.PhoneNumber || "719-228-3408"),
-                  });
-                  console.log("HARDCODED Learn to Skate USA");
-                  return;
-                }
-
-                // GMAIL ADDRESSES
-                // For Casper Figure Skating Club (casperfsc@gmail.com)
-                if (lowerEmail === "casperfsc@gmail.com") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Casper Figure Skating Club",
-                    website: "https://www.casperfsc.com",
-                    phone: String(program.PhoneNumber || ""),
-                  });
-                  console.log("HARDCODED Casper FSC");
-                  return;
-                }
-
-                // For White Mountain (Whitemtnskating@gmail.com)
-                if (lowerEmail === "whitemtnskating@gmail.com") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "White Mountain Skating Club",
-                    website: "https://whitemtnskating.com",
-                    phone: String(program.PhoneNumber || "307-757-7851"),
-                  });
-                  console.log("HARDCODED White Mountain");
-                  return;
-                }
-
-                // For Cody Figure Skating (codyfigureskating@gmail.com)
-                if (lowerEmail === "codyfigureskating@gmail.com") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Cody Figure Skating Club",
-                    website: "https://www.codyfsc.org",
-                    phone: String(program.PhoneNumber || "218-220-0770"),
-                  });
-                  console.log("HARDCODED Cody Figure Skating");
-                  return;
-                }
-
-                // For Jackson Hole (skatingclubofjh@gmail.com)
-                if (lowerEmail === "skatingclubofjh@gmail.com") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Skating Club of Jackson Hole",
-                    website: "https://skatingclubofjh.com",
-                    phone: String(program.PhoneNumber || ""),
-                  });
-                  console.log("HARDCODED Jackson Hole");
-                  return;
-                }
-
-                // For brieannamae@gmail.com
-                if (lowerEmail === "brieannamae@gmail.com") {
-                  programsByEmail.set(lowerEmail, {
-                    name: "Pinedale Figure Skating",
-                    website: "",
-                    phone: String(program.PhoneNumber || "307-749-5795"),
-                  });
-                  console.log("HARDCODED Pinedale");
-                  return;
-                }
 
                 // Try dynamically extracting name from all possible fields
+
                 const programName =
                   program.facility ||
                   program.Facility ||
@@ -327,9 +237,8 @@ export async function POST(request: NextRequest) {
                   program.organization ||
                   program.Organization ||
                   program.OrganizationName ||
-                  "";
+                  ""; // For website, try all possible fields and convert to string
 
-                // For website, try all possible fields and convert to string
                 const website = String(
                   program.url ||
                     program.Url ||
@@ -340,9 +249,8 @@ export async function POST(request: NextRequest) {
                     program.link ||
                     program.Link ||
                     ""
-                );
+                ); // For phone, try all possible fields and convert to string
 
-                // For phone, try all possible fields and convert to string
                 const phone = String(
                   program.phone ||
                     program.Phone ||
@@ -350,12 +258,13 @@ export async function POST(request: NextRequest) {
                     program.Telephone ||
                     program.OrganizationPhoneNumber ||
                     ""
-                );
+                ); // Store program info in our map with string conversions
 
-                // Store program info in our map with string conversions
                 programsByEmail.set(email.toLowerCase(), {
                   name: String(programName),
+
                   website: website,
+
                   phone: phone,
                 });
 
@@ -368,9 +277,8 @@ export async function POST(request: NextRequest) {
         } catch (error) {
           console.error("Error parsing Learn to Skate API response:", error);
         }
-      }
+      } // If we have the programInfo results from any custom extension
 
-      // If we have the programInfo results from any custom extension
       if (
         resultObj.pageEvaluation &&
         resultObj.pageEvaluation.programInfo &&
@@ -381,24 +289,24 @@ export async function POST(request: NextRequest) {
             if (info && typeof info === "object" && info.email) {
               programsByEmail.set(info.email.toLowerCase(), {
                 name: info.name || "",
+
                 website: info.website || "",
+
                 phone: info.phone || "",
               });
             }
           }
         );
-      }
+      } // Create a map directly from the captured API responses // This will map email addresses to their corresponding program information
 
-      // Create a map directly from the captured API responses
-      // This will map email addresses to their corresponding program information
       const apiProgramsMap = new Map<
         string,
         { name: string; website: string; phone: string }
-      >();
+      >(); // Process the API data from the LearnToSkateUSA endpoint
 
-      // Process the API data from the LearnToSkateUSA endpoint
       for (const responseData of apiResponses) {
         // Look for the specific GetPointsFromSearch endpoint which contains program data
+
         if (
           responseData.url &&
           responseData.url.includes("GetPointsFromSearch")
@@ -409,38 +317,45 @@ export async function POST(request: NextRequest) {
             if (data.programs && Array.isArray(data.programs)) {
               console.log(
                 `Processing ${data.programs.length} programs from API response`
-              );
+              ); // Map each program by email for easy lookup
 
-              // Map each program by email for easy lookup
               data.programs.forEach(
                 (program: {
                   ProgramId?: string;
+
                   OrganizationName?: string;
+
                   OrganizationEmail?: string;
+
                   OrganizationPhoneNumber?: string;
+
                   Website?: string;
+
                   City?: string;
+
                   StateCode?: string;
                 }) => {
                   if (program.OrganizationEmail) {
-                    const email = program.OrganizationEmail.toLowerCase();
+                    const email = program.OrganizationEmail.toLowerCase(); // Clean up the website URL if needed
 
-                    // Clean up the website URL if needed
                     let website = program.Website || "";
+
                     if (website === "http://") {
                       website = "";
-                    }
+                    } // Construct full program name with location if available
 
-                    // Construct full program name with location if available
                     let displayName =
                       program.OrganizationName || "Unknown Program";
+
                     if (program.City && program.StateCode) {
                       displayName = `${displayName} (${program.City}, ${program.StateCode})`;
                     }
 
                     apiProgramsMap.set(email, {
                       name: displayName,
+
                       website: website,
+
                       phone: program.OrganizationPhoneNumber || "",
                     });
 
@@ -455,54 +370,58 @@ export async function POST(request: NextRequest) {
             console.error(`Error parsing API response: ${e}`);
           }
         }
-      }
+      } // Modify and enhance the contacts with program info from the API
 
-      // Modify and enhance the contacts with program info from the API
       const enhancedContacts: ScrapedContact[] = result.contacts.map(
         (contact) => {
           // Make sure to use lowercase for lookup to match how we stored entries
+
           const lowerEmail = contact.email.toLowerCase();
+
           console.log(
             `Processing email: ${contact.email} (lookup key: ${lowerEmail})`
-          );
+          ); // First try to find the program in the API response
 
-          // First try to find the program in the API response
           const apiProgramInfo = apiProgramsMap.get(lowerEmail);
 
           if (apiProgramInfo) {
             console.log(
               `Found API program info for ${contact.email}: ${apiProgramInfo.name}`
             );
+
             return {
               email: contact.email,
+
               name: apiProgramInfo.name,
+
               title: contact.title || "Organization",
+
               phone: apiProgramInfo.phone || contact.phone || "",
+
               url: apiProgramInfo.website,
+
               source: "Learn to Skate USA API",
             };
-          }
+          } // If we couldn't find program info in our mapping, // we need to try other methods to extract program info // Method 1: Look in email context to find related HTML
 
-          // If we couldn't find program info in our mapping,
-          // we need to try other methods to extract program info
-
-          // Method 1: Look in email context to find related HTML
           const context = contact.method || contact.source || "";
-          let extractedName = "";
-          let extractedWebsite = "";
 
-          // Try to find program name in context
+          let extractedName = "";
+
+          let extractedWebsite = ""; // Try to find program name in context
+
           const nameInContext = context.match(
             /class=["']listing-heading[^"']*["'][^>]*>([\s\S]*?)<\/p>/i
           );
+
           if (nameInContext) {
             extractedName = nameInContext[1].trim();
-          }
+          } // Try to find website in context
 
-          // Try to find website in context
           const websiteInContext = context.match(
             /href=["']([^"']+)["'][^>]*target=["']_blank["']/i
           );
+
           if (websiteInContext) {
             extractedWebsite = websiteInContext[1].trim();
           }
@@ -510,16 +429,21 @@ export async function POST(request: NextRequest) {
           if (extractedName || extractedWebsite) {
             return {
               email: contact.email,
+
               name: extractedName || "Unknown Program",
+
               title: contact.title || "Organization",
+
               phone: contact.phone || "",
+
               url: extractedWebsite,
+
               source: "Learn to Skate USA API",
             };
-          }
+          } // Method 2: Extract from email domain as last resort
 
-          // Method 2: Extract from email domain as last resort
           const emailDomain = contact.email.split("@")[1] || "";
+
           let domainBasedName = "";
 
           if (
@@ -528,55 +452,73 @@ export async function POST(request: NextRequest) {
             !emailDomain.includes("hotmail.com")
           ) {
             // Transform domain like "cityoflaramie.org" into "City of Laramie"
+
             domainBasedName = emailDomain
+
               .split(".")[0]
               .replace(/([A-Z])/g, " $1") // Add spaces before capital letters
+
               .replace(/([a-z])([A-Z])/g, "$1 $2") // Add spaces between camelCase
+
               .replace(/^./, (str) => str.toUpperCase()) // Capitalize first letter
+
               .replace(/of|and/, (match) => match.toLowerCase()); // Common words lowercase
           }
 
           return {
             email: contact.email,
+
             name: domainBasedName || contact.name || "Unknown Program",
+
             title: contact.title || "Organization",
+
             phone: contact.phone || "",
+
             url: emailDomain ? `https://www.${emailDomain}` : "",
+
             source: "Learn to Skate USA API",
           };
         }
-      );
+      ); // Create program information for raw display
 
-      // Create program information for raw display
       const formattedPrograms = enhancedContacts.map((contact) => ({
         OrganizationName: contact.name,
+
         OrganizationEmail: contact.email,
+
         OrganizationPhoneNumber: contact.phone || "",
+
         Website: contact.url || "",
       }));
 
       return NextResponse.json({
         success: true,
+
         emails: enhancedContacts,
+
         programs: formattedPrograms, // Include the program data for raw display
+
         message: `Found ${result.contacts.length} contacts via browser automation`,
       });
     } catch (error) {
-      console.error("Error during browser-based scraping:", error);
+      console.error("Error during browser-based scraping:", error); // Return a more detailed error
 
-      // Return a more detailed error
       return NextResponse.json(
         {
           error: "Failed to scrape Learn to Skate USA website",
+
           details: error instanceof Error ? error.message : String(error),
         },
+
         { status: 500 }
       );
     }
   } catch (error) {
     console.error("Error processing request:", error);
+
     return NextResponse.json(
       { error: "Failed to process request" },
+
       { status: 500 }
     );
   }
