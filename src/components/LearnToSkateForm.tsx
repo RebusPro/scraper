@@ -84,6 +84,8 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
     setIsLoading(true);
     setError(null);
 
+    console.log("Submitting search for state:", state, "zipCode:", zipCode);
+
     try {
       // Validate that either state or zip code is provided
       if (!state && !zipCode) {
@@ -98,16 +100,22 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
         programName,
       });
 
+      console.log("API response received:", response.data);
+
       if (response.data.emails && response.data.emails.length > 0) {
         // Format the results for the results component
         const contacts: ScrapedContact[] = response.data.emails.map(
-          (item: Record<string, unknown>) => ({
-            email: item.email,
-            name: item.name || "",
-            title: item.title || "",
-            phone: item.phone || "",
-            source: "Learn to Skate USA API",
-          })
+          (item: Record<string, unknown>, index: number) => {
+            console.log(`Contact ${index}:`, item);
+            return {
+              email: String(item.email || ""),
+              name: String(item.name || item.programName || ""),
+              title: String(item.title || ""),
+              phone: String(item.phone || ""),
+              url: String(item.url || item.website || ""), // Ensure website URL is included
+              source: "Learn to Skate USA API",
+            };
+          }
         );
 
         // Pass both formatted contacts and raw program data to parent
@@ -147,7 +155,10 @@ export default function LearnToSkateForm({ onResults }: LearnToSkateFormProps) {
             id="state"
             className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 dark:text-white dark:bg-gray-700 dark:border-gray-600 leading-tight focus:outline-none focus:shadow-outline"
             value={state}
-            onChange={(e) => setState(e.target.value)}
+            onChange={(e) => {
+              console.log("State selected:", e.target.value);
+              setState(e.target.value);
+            }}
           >
             {STATE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>

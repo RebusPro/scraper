@@ -1,5 +1,6 @@
 /**
  * Demo page for the Learn to Skate USA specialized scraper
+ * This matches the style of the main page and is exportable
  */
 
 "use client";
@@ -30,9 +31,15 @@ export default function LearnToSkateDemoPage() {
     setIsDownloading(true);
     try {
       const allContacts = contacts.map((contact) => ({
-        ...contact,
+        email: contact.email || "",
+        name: contact.name || "Unknown Program",
+        title: contact.title || "Organization",
+        phone: contact.phone || "",
         source: "Learn to Skate USA API",
         scrapeTime: new Date().toLocaleString(),
+        // Ensure website URL is included with the proper field name for exports
+        website: contact.url || "",
+        url: contact.url || "",
       }));
 
       if (format === "xlsx") {
@@ -205,13 +212,28 @@ export default function LearnToSkateDemoPage() {
                             {contact.name && (
                               <p className="text-gray-800 dark:text-gray-300">
                                 <span className="font-medium">Program:</span>{" "}
-                                {contact.name}
+                                <span className="font-semibold">
+                                  {contact.name}
+                                </span>
                               </p>
                             )}
                             {contact.phone && (
                               <p className="text-gray-800 dark:text-gray-300">
                                 <span className="font-medium">Phone:</span>{" "}
                                 {contact.phone}
+                              </p>
+                            )}
+                            {contact.url && (
+                              <p className="text-gray-800 dark:text-gray-300">
+                                <span className="font-medium">Website:</span>{" "}
+                                <a
+                                  href={contact.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                                >
+                                  {contact.url}
+                                </a>
                               </p>
                             )}
                           </div>
