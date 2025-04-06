@@ -79,7 +79,10 @@ export class WebScraper {
             console.log(
               `Playwright found ${playwrightContacts.length} contacts`
             );
-            allApiResponses = [...allApiResponses, ...playwrightResponses];
+            allApiResponses = [
+              ...allApiResponses,
+              ...(playwrightResponses || []),
+            ];
           } catch (error) {
             console.warn(
               `Playwright scraping failed for ${normalizedUrl}:`,

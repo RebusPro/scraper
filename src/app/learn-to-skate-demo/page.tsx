@@ -42,6 +42,12 @@ export default function LearnToSkateDemoPage() {
         url: contact.url || "",
       }));
 
+      // *** Log the data RIGHT BEFORE export ***
+      console.log(
+        "Data being passed to export function:",
+        JSON.stringify(allContacts, null, 2)
+      );
+
       if (format === "xlsx") {
         await exportToExcel(allContacts, "learn-to-skate-contacts");
       } else {
