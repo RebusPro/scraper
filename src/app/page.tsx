@@ -277,20 +277,27 @@ export default function Home() {
 
     setIsDownloading(true);
     try {
-      const allContacts = results.flatMap((result) =>
-        result.contacts && result.contacts.length > 0
-          ? result.contacts.map((contact) => ({
-              ...contact,
-              source: result.url,
-              scrapeTime: new Date(result.timestamp).toLocaleString(),
-            }))
-          : []
+      // Format data specifically for the main page export
+      const dataForExport = results.flatMap(
+        (result) =>
+          result.contacts?.map((contact) => ({
+            Email: contact.email || "",
+            Name: contact.name || "",
+            "Title/Position": contact.title || "",
+            "Source Website": contact.source || result.url || "",
+            "Scrape Date": new Date(result.timestamp).toLocaleString(),
+          })) ?? []
       );
 
+      if (dataForExport.length === 0) {
+        alert("No contacts found in the results to export.");
+        return;
+      }
+
       if (format === "xlsx") {
-        await exportToExcel(allContacts, "coaching-email-results");
+        await exportToExcel(dataForExport, "coaching-email-results");
       } else {
-        exportToCSV(allContacts, "coaching-email-results");
+        exportToCSV(dataForExport, "coaching-email-results");
       }
     } catch (error) {
       console.error("Error exporting data:", error);

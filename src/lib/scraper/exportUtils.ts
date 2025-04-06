@@ -2,42 +2,35 @@
  * Utilities for exporting scraped data to different formats
  */
 import * as XLSX from "xlsx";
-import { ScrapedContact } from "./types";
 
 /**
  * Export contacts to Excel (XLSX) format
  */
 export async function exportToExcel(
-  contacts: ScrapedContact[],
+  dataToExport: Array<
+    Record<string, string | number | boolean | null | undefined>
+  >,
   filename: string
 ): Promise<void> {
   try {
-    // Format data for Excel export
-    const formattedData = contacts.map((contact) => ({
-      Email: contact.email,
-      Website: contact.url || "",
-      Name: contact.name || "",
-      // "Title/Position": contact.title || "",
-      Phone: contact.phone || "",
-      // "Source Website": contact.source || "",
-      "Scrape Date": contact.scrapeTime || new Date().toLocaleString(),
-    }));
+    if (!dataToExport || dataToExport.length === 0) {
+      console.warn("No data provided for Excel export.");
+      return;
+    }
 
     // Create worksheet
-    const worksheet = XLSX.utils.json_to_sheet(formattedData);
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
 
-    // Column widths
-    const columnWidths = [
-      { wch: 35 }, // Email
-      { wch: 30 }, // Name
-      { wch: 30 }, // Title
-      { wch: 40 }, // Website
-      { wch: 20 }, // Phone
-      { wch: 40 }, // Source
-      { wch: 20 }, // Date
-    ];
-
-    worksheet["!cols"] = columnWidths;
+    // Auto-calculate column widths (basic)
+    const headers = Object.keys(dataToExport[0]);
+    const colWidths = headers.map((header) => {
+      const maxLength = Math.max(
+        header.length,
+        ...dataToExport.map((row) => String(row[header] ?? "").length)
+      );
+      return { wch: Math.min(50, maxLength + 2) }; // Limit max width
+    });
+    worksheet["!cols"] = colWidths;
 
     // Create workbook
     const workbook = XLSX.utils.book_new();
@@ -55,23 +48,19 @@ export async function exportToExcel(
  * Export contacts to CSV format
  */
 export function exportToCSV(
-  contacts: ScrapedContact[],
+  dataToExport: Array<
+    Record<string, string | number | boolean | null | undefined>
+  >,
   filename: string
 ): void {
   try {
-    // Format data for CSV
-    const formattedData = contacts.map((contact) => ({
-      Email: contact.email,
-      Website: contact.url || "",
-      Name: contact.name || "",
-      // "Title/Position": contact.title || "",
-      Phone: contact.phone || "",
-      // "Source Website": contact.source || "",
-      "Scrape Date": contact.scrapeTime || new Date().toLocaleString(),
-    }));
+    if (!dataToExport || dataToExport.length === 0) {
+      console.warn("No data provided for CSV export.");
+      return;
+    }
 
     // Create worksheet
-    const worksheet = XLSX.utils.json_to_sheet(formattedData);
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
 
     // Create CSV string
     const csvOutput = XLSX.utils.sheet_to_csv(worksheet);
@@ -88,6 +77,68 @@ export function exportToCSV(
   } catch (error) {
     console.error("Error exporting to CSV:", error);
     throw new Error("Failed to export data to CSV");
+  }
+}
+
+/**
+ * Generate Excel file for API endpoint (returns buffer instead of writing to file)
+ */
+export async function generateExcelFile(result: {
+  contacts: Array<Record<string, string | number | boolean | null | undefined>>;
+  url?: string;
+}): Promise<Buffer> {
+  try {
+    if (!result.contacts || result.contacts.length === 0) {
+      throw new Error("No contact data provided for Excel generation.");
+    }
+
+    // Create worksheet directly from the data
+    const worksheet = XLSX.utils.json_to_sheet(result.contacts);
+
+    // Auto-calculate column widths (basic)
+    const headers = Object.keys(result.contacts[0]);
+    const colWidths = headers.map((header) => {
+      const maxLength = Math.max(
+        header.length,
+        ...result.contacts.map((row) => String(row[header] ?? "").length)
+      );
+      return { wch: Math.min(50, maxLength + 2) }; // Limit max width
+    });
+    worksheet["!cols"] = colWidths;
+
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Contacts");
+
+    // Return buffer
+    return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  } catch (error) {
+    console.error("Error generating Excel file buffer:", error);
+    throw new Error("Failed to generate Excel file buffer");
+  }
+}
+
+/**
+ * Generate CSV file for API endpoint (returns buffer instead of writing to file)
+ */
+export function generateCsvFile(result: {
+  contacts: Array<Record<string, string | number | boolean | null | undefined>>;
+  url?: string;
+}): Buffer {
+  try {
+    if (!result.contacts || result.contacts.length === 0) {
+      throw new Error("No contact data provided for CSV generation.");
+    }
+
+    // Create worksheet - header order determined by keys
+    const worksheet = XLSX.utils.json_to_sheet(result.contacts);
+
+    // Convert to CSV and return as buffer
+    const csvOutput = XLSX.utils.sheet_to_csv(worksheet);
+    return Buffer.from(csvOutput);
+  } catch (error) {
+    console.error("Error generating CSV file buffer:", error);
+    throw new Error("Failed to generate CSV file buffer");
   }
 }
 

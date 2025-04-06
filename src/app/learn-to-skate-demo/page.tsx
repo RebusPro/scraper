@@ -30,28 +30,25 @@ export default function LearnToSkateDemoPage() {
 
     setIsDownloading(true);
     try {
-      const allContacts = contacts.map((contact) => ({
-        email: contact.email || "",
-        name: contact.name || "Unknown Program",
-        title: contact.title || "Organization",
-        phone: contact.phone || "",
-        source: "Learn to Skate USA API",
-        scrapeTime: new Date().toLocaleString(),
-        // Ensure website URL is included with the proper field name for exports
-        website: contact.url || "",
-        url: contact.url || "",
+      // Format data specifically for the Learn to Skate demo page export
+      const dataForExport = contacts.map((contact) => ({
+        Email: contact.email || "",
+        Website: contact.url || "", // Use contact.url for the Website column
+        "Program Name": contact.name || "Unknown Program", // Use desired header key
+        Phone: contact.phone || "",
+        "Scrape Date": new Date().toLocaleString(), // Use desired header key
       }));
 
       // *** Log the data RIGHT BEFORE export ***
       console.log(
         "Data being passed to export function:",
-        JSON.stringify(allContacts, null, 2)
+        JSON.stringify(dataForExport, null, 2)
       );
 
       if (format === "xlsx") {
-        await exportToExcel(allContacts, "learn-to-skate-contacts");
+        await exportToExcel(dataForExport, "learn-to-skate-contacts");
       } else {
-        exportToCSV(allContacts, "learn-to-skate-contacts");
+        exportToCSV(dataForExport, "learn-to-skate-contacts");
       }
     } catch (error) {
       console.error("Error exporting data:", error);
