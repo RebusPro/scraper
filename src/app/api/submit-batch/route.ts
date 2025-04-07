@@ -38,7 +38,7 @@ const qstashClient = new Client({
 const WORKER_URL =
   process.env.NODE_ENV === "production"
     ? `${process.env.VERCEL_URL}/api/process-job` // Vercel provides VEREL_URL
-    : "http://localhost:3000/api/process-job"; // Replace if using ngrok locally
+    : "https://tunnel.devrepo.co/api/process-job"; // Replace if using ngrok locally
 // TODO: Make WORKER_URL more robust, possibly via another env var
 
 export async function POST(request: NextRequest) {

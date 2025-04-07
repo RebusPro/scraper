@@ -4,61 +4,41 @@
  */
 "use client";
 
-import { useState } from "react";
-import { ScrapingResult } from "@/lib/scraper/types";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { ScrapingResult, ScrapedContact } from "@/lib/scraper/types";
 import EnhancedBatchUploader from "@/components/EnhancedBatchUploader";
 import ResultsDisplay from "@/components/ResultsDisplay";
 import ScrapeProgressDisplay from "@/components/ScrapeProgressDisplay";
 import SimplifiedScrapeSettingsSelector from "@/components/SimplifiedScrapeSettingsSelector";
 import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
 
-/**
- * Helper function to safely try to parse JSON
- * Returns the parsed object or null if parsing fails
- */
-function tryParseJSON(text: string) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    // Try to find the last valid JSON object in the text
-    // This handles cases where we have multiple JSON objects in the stream
-    const lastBrace = text.lastIndexOf("}");
-    if (lastBrace > 0) {
-      try {
-        // Find the last opening brace that has a matching closing brace
-        let openBraceIndex = -1;
-        let braceCount = 0;
-        for (let i = lastBrace; i >= 0; i--) {
-          if (text[i] === "}") braceCount++;
-          if (text[i] === "{") braceCount--;
-          if (braceCount === 0) {
-            openBraceIndex = i;
-            break;
-          }
-        }
-
-        if (openBraceIndex >= 0) {
-          const possibleJSON = text.substring(openBraceIndex, lastBrace + 1);
-          return JSON.parse(possibleJSON);
-        }
-      } catch {
-        // Silent fail, we'll return null below
-      }
-    }
-    return null;
-  }
+// Interface for the structure returned by the batch-status API
+interface BatchStatusResponse {
+  message: string;
+  progress: {
+    processed: number;
+    // total might be added later
+  };
+  results: (Partial<ScrapingResult> & {
+    batch_id?: string;
+    created_at?: string;
+    id?: string;
+    error_message?: string | null;
+    url: string;
+    status: "success" | "error";
+    contacts: ScrapedContact[] | null;
+  })[];
 }
 
 export default function Home() {
   const [results, setResults] = useState<ScrapingResult[]>([]);
-  const [currentResult, setCurrentResult] = useState<ScrapingResult | null>(
-    null
-  );
   const [isScrapingBatch, setIsScrapingBatch] = useState(false);
-  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  const [batchProgress, setBatchProgress] = useState({ current: 0 });
+  const [totalUrlsInBatch, setTotalUrlsInBatch] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   const [errors, setErrors] = useState<{ url: string; error: string }[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
+  const pollingIntervalId = useRef<NodeJS.Timeout | null>(null); // Ref to store interval ID
   const [scrapeSettings, setScrapeSettings] = useState({
     mode: "standard" as "standard" | "aggressive" | "gentle",
     maxDepth: 2,
@@ -69,6 +49,97 @@ export default function Home() {
   });
   const [showFeatureInfo, setShowFeatureInfo] = useState(false);
 
+  // --- New function to fetch batch status via polling ---
+  const fetchBatchStatus = useCallback(async () => {
+    if (!currentBatchId) {
+      console.log("Polling stopped: No Batch ID");
+      if (pollingIntervalId.current) clearInterval(pollingIntervalId.current);
+      pollingIntervalId.current = null;
+      setIsScrapingBatch(false); // Ensure scraping is marked as stopped
+      return;
+    }
+
+    console.log(`Polling status for Batch ID: ${currentBatchId}`);
+    try {
+      const response = await fetch(
+        `/api/batch-status?batchId=${currentBatchId}`
+      );
+      if (!response.ok) {
+        // If API returns an error (e.g., 404, 500), stop polling
+        console.error(`Error fetching batch status: ${response.status}`);
+        throw new Error(`API error ${response.status}`);
+      }
+
+      const data: BatchStatusResponse = await response.json();
+
+      // Update results (replace current results with latest from status)
+      // The status API returns results including DB fields, map back to ScrapingResult
+      const updatedResults: ScrapingResult[] = data.results.map((dbResult) => ({
+        url: dbResult.url,
+        contacts: dbResult.contacts || [], // contacts are already parsed in the API response or null
+        timestamp: dbResult.created_at || new Date().toISOString(), // Use DB timestamp
+        status: dbResult.status,
+        message: dbResult.error_message || undefined,
+        // stats can be recalculated or potentially added to DB later
+        stats: {
+          totalEmails: dbResult.contacts?.length || 0,
+          totalWithNames:
+            dbResult.contacts?.filter((c: ScrapedContact) => !!c.name).length ||
+            0, // Use ScrapedContact type
+          pagesScraped: 1, // Placeholder, might need adjustment if DB stores this
+        },
+      }));
+      setResults(updatedResults);
+
+      // Update errors based on results with error status
+      const updatedErrors = updatedResults
+        .filter((r) => r.status === "error")
+        .map((r) => ({ url: r.url, error: r.message || "Unknown error" }));
+      setErrors(updatedErrors);
+
+      // Update progress
+      const processedCount = data.progress.processed;
+      setBatchProgress({ current: processedCount });
+
+      // Check for completion
+      if (totalUrlsInBatch > 0 && processedCount >= totalUrlsInBatch) {
+        console.log(
+          `Batch ${currentBatchId} completed. Processed ${processedCount}/${totalUrlsInBatch}. Stopping polling.`
+        );
+        if (pollingIntervalId.current) clearInterval(pollingIntervalId.current);
+        pollingIntervalId.current = null;
+        setIsScrapingBatch(false);
+        setCurrentBatchId(null); // Reset batch ID
+      } else {
+        console.log(
+          `Batch ${currentBatchId} progress: ${processedCount}/${totalUrlsInBatch}`
+        );
+      }
+    } catch (error) {
+      console.error("Error during polling:", error);
+      // Stop polling on error to avoid infinite loops
+      if (pollingIntervalId.current) clearInterval(pollingIntervalId.current);
+      pollingIntervalId.current = null;
+      setIsScrapingBatch(false);
+      setCurrentBatchId(null);
+      // Potentially set a general error message for the user
+      setErrors((prev) => [
+        ...prev,
+        { url: "Batch Status", error: "Failed to get updates." },
+      ]);
+    }
+  }, [currentBatchId, totalUrlsInBatch]); // Dependencies for useCallback
+
+  // --- Effect to handle polling interval cleanup on unmount ---
+  useEffect(() => {
+    // Clear interval when component unmounts or when scraping finishes
+    return () => {
+      if (pollingIntervalId.current) {
+        clearInterval(pollingIntervalId.current);
+      }
+    };
+  }, []);
+
   // Handle batch scraping from Excel/CSV file
   const handleBatchScrape = async (urlList: string[]) => {
     if (!urlList || urlList.length === 0) return;
@@ -76,14 +147,23 @@ export default function Home() {
     // Make sure we have an array even for a single URL
     const urls = Array.isArray(urlList) ? urlList : [urlList];
 
+    // --- Reset state for new batch ---
     setIsScrapingBatch(true);
-    setBatchProgress({ current: 0, total: urls.length });
+    setTotalUrlsInBatch(urls.length); // Store total
+    setBatchProgress({ current: 0 }); // Reset current count
     setResults([]);
     setErrors([]);
+    setCurrentBatchId(null); // Clear previous batch ID
+
+    // --- Clear any existing polling interval ---
+    if (pollingIntervalId.current) {
+      clearInterval(pollingIntervalId.current);
+      pollingIntervalId.current = null;
+    }
 
     try {
-      // Send all URLs to the API at once
-      const response = await fetch("/api/scrape", {
+      // --- Call the new submit-batch API ---
+      const response = await fetch("/api/submit-batch", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -94,173 +174,37 @@ export default function Home() {
         }),
       });
 
-      if (!response.ok) {
+      // Check for 202 Accepted status
+      if (response.status !== 202) {
         throw new Error(`API returned status ${response.status}`);
       }
 
-      // Store the session ID for cancellation
-      const newSessionId = response.headers.get("X-Scraping-Session-Id");
-      if (newSessionId) {
-        setSessionId(newSessionId);
-      }
+      // --- Process response, get Batch ID, start polling ---
+      const submitResponse = await response.json();
+      if (submitResponse.batchId) {
+        console.log(
+          `Batch submitted successfully. Batch ID: ${submitResponse.batchId}`
+        );
+        setCurrentBatchId(submitResponse.batchId);
 
-      // Process the response as a stream for real-time updates
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Failed to get response reader");
-      }
-
-      // Buffer to accumulate data across chunks
-      let buffer = "";
-      let lastValidResult = null;
-
-      // Read the stream
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          console.log("Stream done signal received");
-          break;
-        }
-
-        // Decode the chunk and add to buffer
-        const newContent = new TextDecoder().decode(value);
-        buffer += newContent;
-
-        try {
-          // Try to parse the JSON from the buffer
-          const result = tryParseJSON(buffer);
-
-          if (result) {
-            // Always log result for debugging
-            console.log("Received streaming result:", {
-              done: result.done,
-              processed: result.processed,
-              total: result.total,
-              resultCount: result.results?.length || 0,
-              emailCount: result.results?.reduce(
-                (sum: number, r: ScrapingResult) =>
-                  sum + (r.contacts?.length || 0),
-                0
-              ),
-            });
-
-            // Save last valid result for error recovery
-            lastValidResult = result;
-
-            // Clear buffer after successful parse
-            buffer = "";
-
-            // Update the state with the results
-            if (result.results && result.results.length > 0) {
-              setResults(result.results);
-              setCurrentResult(result.results[0]);
-            }
-
-            // Update errors
-            if (result.errors && result.errors.length > 0) {
-              setErrors(result.errors);
-            }
-
-            // Update progress
-            setBatchProgress({
-              current: result.processed || 0,
-              total: result.total || urls.length,
-            });
-
-            // Mark as done
-            if (result.done) {
-              console.log("SCRAPING COMPLETE - FINAL RESULTS:", {
-                totalResults: result.results?.length || 0,
-                totalEmails:
-                  result.results?.reduce(
-                    (sum: number, r: ScrapingResult) =>
-                      sum + (r.contacts?.length || 0),
-                    0
-                  ) || 0,
-              });
-
-              // Force update UI state to refresh everything
-              setIsScrapingBatch(false);
-
-              // Make sure we have the most complete data
-              if (result.results && result.results.length > 0) {
-                console.log(
-                  "Final data set - forcing refresh of UI with complete data"
-                );
-                setResults(result.results);
-                setCurrentResult(result.results[0]);
-              }
-
-              // Exit the loop
-              break;
-            }
-          }
-        } catch (parseError) {
-          console.error("Error parsing stream chunk:", parseError);
-
-          // If parsing fails, we might need more data
-          // But if the buffer gets too large, something's wrong
-          if (buffer.length > 50000) {
-            console.error("Buffer too large, resetting");
-            buffer = "";
-          }
-
-          // If we already have results, don't let a JSON parsing error prevent completion
-          if (results.length > 0) {
-            console.log("Handling graceful completion despite parse error");
-            console.log(
-              `Current results count: ${results.length} with ${results.reduce(
-                (total, r) => total + (r.contacts?.length || 0),
-                0
-              )} total emails`
-            );
-
-            // Make the results available in the UI even if stream processing fails
-            setIsScrapingBatch(false);
-
-            // Try to recover using last valid result
-            if (lastValidResult) {
-              console.log("Using last valid result to recover from error");
-              if (
-                lastValidResult.results &&
-                lastValidResult.results.length > 0
-              ) {
-                setResults(lastValidResult.results);
-                setCurrentResult(lastValidResult.results[0]);
-              }
-            }
-          }
-        }
+        // Start polling immediately and then every 5 seconds
+        fetchBatchStatus(); // Initial fetch
+        pollingIntervalId.current = setInterval(fetchBatchStatus, 5000);
+      } else {
+        throw new Error("API did not return a batchId");
       }
     } catch (error) {
-      console.error("Error in batch scrape:", error);
+      console.error("Error in batch scrape submission:", error); // Updated error context
       setIsScrapingBatch(false);
-
-      // Ensure we show any results we already have
-      if (results.length > 0) {
-        console.log("Showing available results despite error");
-      }
-
-      // Cancel any active scraping
-      if (sessionId) {
-        try {
-          await fetch(`/api/scrape?sessionId=${sessionId}`, {
-            method: "DELETE",
-          });
-        } catch (cancelError) {
-          console.error("Error cancelling scrape:", cancelError);
-        }
-      }
-
-      // Create a generic error result
+      // Display a general error message
       const batchResults: ScrapingResult[] = urls.map((url) => ({
+        // Keep this for initial error display
         url,
         contacts: [],
         timestamp: new Date().toISOString(),
         status: "error",
         message: error instanceof Error ? error.message : "Unknown error",
       }));
-
       setResults(batchResults);
       setErrors(
         urls.map((url) => ({
@@ -309,31 +253,21 @@ export default function Home() {
 
   // Handle cancellation of scraping
   const handleCancelScraping = async () => {
-    if (!sessionId) {
-      console.error("No session ID available for cancellation");
-      setIsScrapingBatch(false);
-      return;
+    console.log("Cancel requested by user.");
+    // Stop the frontend polling
+    if (pollingIntervalId.current) {
+      clearInterval(pollingIntervalId.current);
+      pollingIntervalId.current = null;
     }
+    // Reset state
+    setIsScrapingBatch(false);
+    setCurrentBatchId(null);
 
-    try {
-      const response = await fetch(`/api/scrape?sessionId=${sessionId}`, {
-        method: "DELETE",
-      });
-
-      if (response.ok) {
-        setIsScrapingBatch(false);
-      } else {
-        const errorText = await response.text();
-        console.error("Failed to cancel scraping:", errorText);
-
-        // If we can't cancel, still update the UI
-        setIsScrapingBatch(false);
-      }
-    } catch (error) {
-      console.error("Error cancelling scrape:", error);
-      // If we can't cancel, still update the UI
-      setIsScrapingBatch(false);
-    }
+    // Optional TODO: Add an API call here to inform the backend
+    // (e.g., `/api/cancel-batch?batchId=...`) which could potentially
+    // flag the batch in the DB or attempt to cancel pending QStash jobs.
+    // This is more complex and might not be necessary if simply stopping
+    // the frontend polling and result aggregation is sufficient.
   };
 
   return (
@@ -595,10 +529,9 @@ export default function Home() {
             <ScrapeProgressDisplay
               inProgress={isScrapingBatch}
               processedUrls={batchProgress.current}
-              totalUrls={batchProgress.total}
+              totalUrls={totalUrlsInBatch}
               results={results}
               errors={errors}
-              remainingUrls={[]}
               onCancel={handleCancelScraping}
             />
           )}
@@ -606,7 +539,7 @@ export default function Home() {
           {/* Results display */}
           {results.length > 0 && (
             <ResultsDisplay
-              result={currentResult}
+              result={results[0]}
               allResults={results}
               onDownload={handleDownload}
               isDownloading={isDownloading}

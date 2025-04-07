@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Receiver } from "@upstash/qstash";
-// import { ImprovedPlaywrightScraper } from "@/lib/scraper/improvedPlaywrightScraper"; // Comment out until used
-// import { WebScraper } from "@/lib/scraper"; // Assuming index exports WebScraper // Already removed
+import { ImprovedPlaywrightScraper } from "@/lib/scraper/improvedPlaywrightScraper"; // Use the scraper
 import { ScrapedContact } from "@/lib/scraper/types";
+import { createClient } from "@supabase/supabase-js"; // Import Supabase client
 
 // Set the maximum duration for this worker function
 export const maxDuration = 180;
@@ -27,7 +27,22 @@ const receiver = new Receiver({
   nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY!,
 });
 
-// The main POST handler, wrapped for signature verification
+// Initialize Supabase client (use service role key for backend operations)
+if (
+  !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  !process.env.SUPABASE_SERVICE_ROLE_KEY
+) {
+  console.error(
+    "Supabase environment variables (URL or Service Role Key) are not set."
+  );
+  // Avoid throwing here during initialization, handle potential client errors during request
+}
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+// The main POST handler
 async function handler(request: NextRequest) {
   // Verify signature
   const signature = request.headers.get("upstash-signature");
@@ -53,78 +68,126 @@ async function handler(request: NextRequest) {
     return new Response("Invalid signature", { status: 401 });
   }
 
+  // Parse the validated body
   let jobPayload: JobPayload;
   try {
-    jobPayload = JSON.parse(bodyText); // Parse the text we already read
+    jobPayload = JSON.parse(bodyText);
   } catch (parseError: unknown) {
     console.error("Error parsing job payload after verification:", parseError);
     return NextResponse.json(
       { error: "Failed to parse job payload" },
-      { status: 400 } // Bad Request due to parsing error
+      { status: 400 }
     );
   }
 
-  try {
-    const { batchId, url, settings } = jobPayload;
+  // --- Main job processing logic ---
+  const { batchId, url, settings } = jobPayload;
+  let scrapeResult: ScrapedContact[] | null = null;
+  let errorMessage: string | null = null;
+  let status: "success" | "error" = "success"; // Default to success
+  let scraper: ImprovedPlaywrightScraper | null = null; // Declare scraper instance variable
 
+  try {
     console.log(`Processing job for URL: ${url}, Batch ID: ${batchId}`);
 
-    // --- Placeholder for Scraping Logic ---
-    let scrapeResult: ScrapedContact[] | null = null;
-    let errorMessage: string | null = null;
-    try {
-      // TODO: Implement actual scraping call using jobPayload.url and jobPayload.settings
-      // const scraper = await getScraperInstance();
-      // scrapeResult = await scraper.scrapeWebsite(url, settings);
-      console.log(`[Placeholder] Scraping logic for ${url} would run here.`);
-      console.log(`[Placeholder] Using settings: ${JSON.stringify(settings)}`);
-      // Simulate finding some contacts for now
-      scrapeResult = [{ email: `test@${new URL(url).hostname}`, source: url }];
-      await new Promise((resolve) => setTimeout(resolve, 2000)); // Simulate work
-      console.log(`[Placeholder] Scraping logic finished for ${url}.`);
-    } catch (error) {
-      console.error(`Error scraping ${url} for batch ${batchId}:`, error);
-      errorMessage =
-        error instanceof Error ? error.message : "Unknown scraping error";
-    }
-    // --- End Placeholder ---
+    // Instantiate the scraper
+    // TODO: Optimize - investigate reusing browser instances if possible
+    scraper = new ImprovedPlaywrightScraper();
 
-    // --- Placeholder for Database Logic ---
+    // --- Actual Scraping Logic ---
     try {
-      // TODO: Implement database write logic here
-      // await saveResultToDatabase(batchId, url, scrapeResult, errorMessage);
       console.log(
-        `[Placeholder] Database write for ${url} (Batch ID: ${batchId}) would happen here.`
+        `Starting scrape for ${url} with settings: ${JSON.stringify(settings)}`
       );
+      // Use the ImprovedPlaywrightScraper as it's generally more advanced
+      // Ensure scrapeWebsite returns ScrapedContact[] as expected by its definition
+      scrapeResult = await scraper.scrapeWebsite(url, settings);
       console.log(
-        `   Result: ${
-          scrapeResult ? JSON.stringify(scrapeResult) : "null"
-        }, Error: ${errorMessage}`
+        `Scraping finished for ${url}. Found ${
+          scrapeResult?.length ?? 0
+        } contacts.`
       );
-      await new Promise((resolve) => setTimeout(resolve, 100)); // Simulate DB write
-    } catch (dbError) {
+    } catch (scrapeError: unknown) {
+      console.error(`Error scraping ${url} for batch ${batchId}:`, scrapeError);
+      errorMessage =
+        scrapeError instanceof Error
+          ? scrapeError.message
+          : "Unknown scraping error";
+      status = "error"; // Mark status as error if scraping fails
+      scrapeResult = null; // Ensure result is null on error
+    }
+    // --- End Scraping Logic ---
+
+    // --- Database Logic ---
+    try {
+      console.log(
+        `Attempting to save result for ${url} (Batch ID: ${batchId}) to database...`
+      );
+      const { data, error: dbError } = await supabase
+        .from("scraping_results") // Use your actual table name
+        .insert([
+          {
+            batch_id: batchId,
+            url: url,
+            status: status,
+            // Ensure contacts is null if scrapeResult is null, otherwise stringify
+            contacts: scrapeResult ? JSON.stringify(scrapeResult) : null,
+            error_message: errorMessage,
+            // created_at should be handled by DB default
+          },
+        ])
+        .select(); // Optionally select to confirm insert
+
+      if (dbError) {
+        throw dbError; // Throw error to be caught by outer catch block
+      }
+      console.log(
+        `Successfully saved result for ${url} (Batch ID: ${batchId})`,
+        data
+      );
+    } catch (dbError: unknown) {
       console.error(
-        `Error saving result for ${url} (Batch ID: ${batchId}) to database:`,
+        `DATABASE ERROR saving result for ${url} (Batch ID: ${batchId}):`,
         dbError
       );
       // If DB write fails, QStash might retry the job unless we return success
-      // Depending on requirements, might want to return an error status here
-      // to force a retry, or log and return success to avoid infinite loops.
-      // For now, log and continue to return success to QStash.
+      // It's often better to return success to QStash here and rely on logging/monitoring
+      // to catch DB errors, preventing potential infinite retries if the DB issue persists.
+      // However, you *could* return status 500 here to force a retry if preferred.
+      // For now, we log the error but still return success below.
+      errorMessage = `Failed to save result to DB: ${
+        dbError instanceof Error ? dbError.message : String(dbError)
+      }`;
+      // Optionally update status if DB write fails, though the scrape itself might have succeeded
+      // status = 'error';
     }
-    // --- End Placeholder ---
+    // --- End Database Logic ---
 
-    // Respond to QStash that the job was processed (even if scraping/DB write had issues within)
-    return NextResponse.json({ success: true, processedUrl: url });
+    // Respond to QStash that the job was handled.
+    // QStash mainly cares that we received and attempted the job.
+    // Internal errors (like DB write failure) are logged above.
+    return NextResponse.json({
+      success: true,
+      processedUrl: url,
+      dbErrorMessage: errorMessage,
+    });
   } catch (jobProcessingError: unknown) {
-    console.error("Error processing job payload:", jobProcessingError);
-    // Return an error status code so QStash knows the job failed and might retry
+    console.error("Unhandled error during job processing:", jobProcessingError);
+    // Return an error status code so QStash knows the job failed definitively
     return NextResponse.json(
-      { error: "Failed to process job payload" },
+      { error: "Failed during job processing" },
       { status: 500 }
     );
+  } finally {
+    // Ensure the browser instance is closed even if errors occurred
+    if (scraper) {
+      console.log(`Closing browser instance for ${url}`);
+      await scraper.close().catch((closeErr) => {
+        console.error(`Error closing scraper for ${url}:`, closeErr);
+      });
+    }
   }
 }
 
-// Export the raw handler - verification is now inside
+// Export the handler
 export { handler as POST };
