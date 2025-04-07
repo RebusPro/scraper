@@ -5,6 +5,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Link from "next/link";
 import { ScrapingResult, ScrapedContact } from "@/lib/scraper/types";
 import EnhancedBatchUploader from "@/components/EnhancedBatchUploader";
 import ResultsDisplay from "@/components/ResultsDisplay";
@@ -519,15 +520,22 @@ export default function Home() {
         <div className="space-y-6">
           {/* Upload component */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-            <div className="mb-4">
-              <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
-                Upload Your Website List
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300">
-                Upload an Excel file with websites to scrape or paste URLs
-                directly. The system will automatically extract all available
-                contact information.
-              </p>
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-2">
+                  Upload Your Website List
+                </h2>
+                <p className="text-sm text-gray-600 dark:text-gray-300 max-w-lg">
+                  Upload an Excel file with websites to scrape or paste URLs
+                  directly. The system will automatically extract all available
+                  contact information.
+                </p>
+              </div>
+              <Link href="/history" legacyBehavior>
+                <a className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-600 dark:focus:ring-offset-gray-800 whitespace-nowrap">
+                  View History
+                </a>
+              </Link>
             </div>
 
             {/* Simplified Scrape settings selector */}
