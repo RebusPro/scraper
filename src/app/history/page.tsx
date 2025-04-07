@@ -104,11 +104,11 @@ export default function HistoryPage() {
 
   // Refetch data when currentPage changes, maintaining filters
   useEffect(() => {
-    if (currentPage !== 1) {
-      // Avoid refetch on initial load
-      fetchBatches(currentPage, startDate, endDate);
-    }
-  }, [currentPage, fetchBatches, startDate, endDate]); // Add filter states as deps
+    // Remove the condition - fetch whenever currentPage or filters change
+    // The initial fetch is handled by the effect above.
+    // We need this to run even when currentPage becomes 1 via the Previous button.
+    fetchBatches(currentPage, startDate, endDate);
+  }, [currentPage, fetchBatches, startDate, endDate]); // Dependencies are correct
 
   // Fetch results when a batch is selected
   useEffect(() => {
