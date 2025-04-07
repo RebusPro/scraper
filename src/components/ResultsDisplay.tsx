@@ -3,7 +3,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ScrapedContact, ScrapingResult } from "@/lib/scraper/types";
 
 interface ResultsDisplayProps {
@@ -20,6 +20,11 @@ export default function ResultsDisplay({
 }: ResultsDisplayProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // Get all contacts from all results, ensuring we have valid contacts
   const allContacts = allResults
@@ -99,9 +104,11 @@ export default function ResultsDisplay({
           <h2 className="text-xl font-semibold text-gray-800 dark:text-white">
             Scraping Results
           </h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            {new Date().toLocaleString()}
-          </p>
+          {isClient && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              {new Date().toLocaleString()}
+            </p>
+          )}
         </div>
 
         <div className="flex space-x-2 mt-4 md:mt-0">
@@ -202,7 +209,7 @@ export default function ResultsDisplay({
               </select>
             </div>
 
-            <div className="text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap">
+            <div className="text-sm text-gray-600 dark:text-gray-300">
               Showing{" "}
               <span className="font-semibold">{filteredContacts.length}</span>{" "}
               of <span className="font-semibold">{allContacts.length}</span>{" "}

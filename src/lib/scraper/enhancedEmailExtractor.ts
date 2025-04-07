@@ -335,7 +335,6 @@ export function extractObfuscatedEmails(content: string): string[] {
     try {
       const decoded = decodeCloudflareEmail(match[1]);
       if (decoded) emails.push(decoded);
-      // eslint-disable-next-line no-empty
     } catch {}
   }
 
@@ -345,7 +344,6 @@ export function extractObfuscatedEmails(content: string): string[] {
     try {
       const decoded = decodeWordPressEmail(match[1]);
       if (decoded) emails.push(decoded);
-      // eslint-disable-next-line no-empty
     } catch {}
   }
 
@@ -364,7 +362,6 @@ export function extractObfuscatedEmails(content: string): string[] {
         );
         if (emailMatch) emails.push(emailMatch[0]);
       }
-      // eslint-disable-next-line no-empty
     } catch {}
   }
 
@@ -388,7 +385,6 @@ function decodeCloudflareEmail(encodedEmail: string): string | null {
     }
 
     return email;
-    // eslint-disable-next-line no-empty
   } catch {}
 
   return null;
@@ -413,7 +409,6 @@ function decodeWordPressEmail(encodedEmail: string): string | null {
           newCharCode <= upperBound ? newCharCode : newCharCode - 26
         );
       });
-      // eslint-disable-next-line no-empty
     } catch {}
 
     return null;

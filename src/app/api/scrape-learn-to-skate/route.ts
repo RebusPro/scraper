@@ -15,29 +15,9 @@ import { NextRequest, NextResponse } from "next/server";
 // Increase the maximum execution duration for this function to 60 seconds (Vercel Pro plan)
 export const maxDuration = 180; // Increase to 3 minutes for interactive scrape
 
-// Type definitions for program information
-
-interface ProgramInfo {
-  name: string;
-
-  website: string;
-
-  phone: string;
-}
-
-// Type for program info from page evaluation
-
-interface PageProgramInfo {
-  name?: string;
-
-  website?: string;
-
-  phone?: string;
-
-  email?: string;
-}
-
-// No need for this interface as we're using a more specific ApiResponse interface later
+// Remove unused interfaces
+// interface ProgramInfo { ... }
+// interface PageProgramInfo { ... }
 
 // Type for program data from the API
 
@@ -140,280 +120,124 @@ export async function POST(request: NextRequest) {
     });
 
     try {
-      // Run the scraper on the Learn to Skate USA website
-
+      // Run the scraper
       const result = await scraper.scrapeWebsite(
         "https://www.learntoskateusa.com/findaskatingprogram/#mapListings"
       );
 
-      console.log(
-        `Browser-based scraping completed. Found ${result.contacts.length} contacts.`
-      ); // This map will hold our program information extracted from HTML
-
-      const programsByEmail = new Map<string, ProgramInfo>(); // We'll focus on extracting program info directly from the API response // since that's where the accurate program names and websites come from // All HTML parsing logic was removed as it's not needed // Look for the Learn to Skate API response in the captured data // This is the key to solving this problem!
-
-      const resultObj = JSON.parse(JSON.stringify(result)); // Get the API responses that were captured during scraping
-
-      const apiResponses = resultObj.apiResponses || []; // Find the Learn to Skate USA API response that contains program information
+      const resultObj = JSON.parse(JSON.stringify(result));
+      const apiResponses = resultObj.apiResponses || [];
 
       interface ApiResponse {
         url?: string;
-
         content: string;
       }
 
-      const learnToSkateApiResponse = apiResponses.find(
+      // --- REVISED LOGIC ---
+      // 1. Find ALL relevant API responses
+      const learnToSkateApiResponses = apiResponses.filter(
         (response: ApiResponse) =>
           response.url?.includes("/umbraco/surface/Map/GetPointsFromSearch")
       );
+      console.log(
+        `Found ${learnToSkateApiResponses.length} GetPointsFromSearch responses.`
+      );
 
-      if (learnToSkateApiResponse) {
+      // 2. Select the LAST response, assuming it's the correct one after form submit
+      const finalApiResponse =
+        learnToSkateApiResponses.length > 0
+          ? learnToSkateApiResponses[learnToSkateApiResponses.length - 1]
+          : null;
+
+      // 3. Initialize results array
+      const enhancedContacts: ScrapedContact[] = [];
+      let formattedPrograms: LearnToSkateProgram[] = []; // For raw display
+
+      // 4. Process ONLY the final response
+      if (finalApiResponse) {
         try {
-          // Parse the API response which contains program information
-
-          const apiData = JSON.parse(learnToSkateApiResponse.content); // EMERGENCY FIX: Extract and log the actual API response structure
-
-          console.log("EMERGENCY: LEARN TO SKATE API RESPONSE STRUCTURE"); // Dump all the properties for debugging
-
-          console.log("API Properties:");
-
-          Object.keys(apiData).forEach((key) => {
-            console.log(`apiData.${key} = ${typeof apiData[key]}`);
-          }); // Check if the API response contains program data
+          const apiData = JSON.parse(finalApiResponse.content);
+          console.log(`Processing the FINAL GetPointsFromSearch response.`);
+          // Vercel Debug log for the final response
+          console.log(
+            `VERCEL_DEBUG (Final): Received ${
+              apiData.programs?.length ?? 0
+            } programs. First few:`,
+            JSON.stringify(apiData.programs?.slice(0, 5), null, 2)
+          );
 
           if (apiData && apiData.programs && Array.isArray(apiData.programs)) {
-            console.log(
-              `Found ${apiData.programs.length} programs in API response`
-            ); // HARDCODED EXAMPLE: If programs array exists, log the EXACT structure of the first one
-
-            if (apiData.programs.length > 0) {
-              const sampleProgram = apiData.programs[0];
-
-              console.log("CRITICAL - EXACT PROGRAM FIELDS:");
-
-              Object.keys(sampleProgram).forEach((field) => {
-                console.log(`${field}: ${sampleProgram[field]}`);
-              });
-            } // Log the first program to see its actual structure
-
-            if (apiData.programs.length > 0) {
-              console.log("SAMPLE PROGRAM DATA:");
-
-              console.log(JSON.stringify(apiData.programs[0], null, 2));
-            } // EMERGENCY FIX: Handle the specific case for Wind River Skate Club
-
             apiData.programs.forEach((program: LearnToSkateProgram) => {
-              // Log the complete program data for each program to see what fields are available
-
-              console.log(
-                "====================================================="
-              );
-
-              console.log(
-                `PROGRAM DATA FOR EMAIL: ${program.Email || "unknown email"}`
-              );
-
-              for (const key in program) {
-                console.log(`${key}: ${program[key]}`);
+              // Ensure potential email fields are strings before calling toLowerCase
+              let email: string | undefined = undefined;
+              if (typeof program.OrganizationEmail === "string") {
+                email = program.OrganizationEmail.toLowerCase();
+              } else if (typeof program.Email === "string") {
+                email = program.Email.toLowerCase();
+              } else if (typeof program.email === "string") {
+                email = program.email.toLowerCase();
               }
-
-              console.log(
-                "====================================================="
-              ); // Extract the email
-
-              const email = program.Email || program.email;
 
               if (email) {
-                // HARDCODED CASES based on the feedback
+                let website =
+                  typeof program.Website === "string" ? program.Website : "";
+                if (website === "http://") website = "";
 
-                // Try dynamically extracting name from all possible fields
+                let displayName = program.OrganizationName || "Unknown Program";
+                if (program.City && program.StateCode) {
+                  displayName = `${displayName} (${program.City}, ${program.StateCode})`;
+                }
 
-                const programName =
-                  program.facility ||
-                  program.Facility ||
-                  program.title ||
-                  program.Title ||
-                  program.name ||
-                  program.Name ||
-                  program.FacilityName ||
-                  program.facilityName ||
-                  program.organization ||
-                  program.Organization ||
-                  program.OrganizationName ||
-                  ""; // For website, try all possible fields and convert to string
-
-                const website = String(
-                  program.url ||
-                    program.Url ||
-                    program.website ||
-                    program.Website ||
-                    program.web ||
-                    program.Web ||
-                    program.link ||
-                    program.Link ||
-                    ""
-                ); // For phone, try all possible fields and convert to string
-
-                const phone = String(
-                  program.phone ||
-                    program.Phone ||
-                    program.telephone ||
-                    program.Telephone ||
-                    program.OrganizationPhoneNumber ||
-                    ""
-                ); // Store program info in our map with string conversions
-
-                programsByEmail.set(email.toLowerCase(), {
-                  name: String(programName),
-
-                  website: website,
-
-                  phone: phone,
+                enhancedContacts.push({
+                  email: email,
+                  name: displayName,
+                  title: "Organization", // Default title
+                  phone: program.OrganizationPhoneNumber || "",
+                  url: website,
+                  source: "Learn to Skate USA API",
                 });
-
-                console.log(
-                  `Mapped email ${email} to program "${programName}" with website "${website}"`
-                );
               }
             });
+
+            // Build formattedPrograms based on the final list for raw display
+            formattedPrograms = enhancedContacts.map(
+              (contact) =>
+                ({
+                  OrganizationName: contact.name,
+                  OrganizationEmail: contact.email,
+                  OrganizationPhoneNumber: contact.phone || "",
+                  Website: contact.url || "",
+                } as LearnToSkateProgram)
+            );
+            console.log(
+              `Successfully processed ${enhancedContacts.length} contacts from final API response.`
+            );
+          } else {
+            console.log(
+              "Final API response did not contain a valid 'programs' array."
+            );
           }
-        } catch (error) {
-          console.error("Error parsing Learn to Skate API response:", error);
+        } catch (parseError) {
+          console.error(
+            "Error parsing FINAL Learn to Skate API response:",
+            parseError
+          );
         }
-      } // If we have the programInfo results from any custom extension
-
-      if (
-        resultObj.pageEvaluation &&
-        resultObj.pageEvaluation.programInfo &&
-        Array.isArray(resultObj.pageEvaluation.programInfo)
-      ) {
-        resultObj.pageEvaluation.programInfo.forEach(
-          (info: PageProgramInfo) => {
-            if (info && typeof info === "object" && info.email) {
-              programsByEmail.set(info.email.toLowerCase(), {
-                name: info.name || "",
-
-                website: info.website || "",
-
-                phone: info.phone || "",
-              });
-            }
-          }
-        );
-      } // Create a map directly from the captured API responses // This will map email addresses to their corresponding program information
-
-      const apiProgramsMap = new Map<
-        string,
-        { name: string; website: string; phone: string }
-      >(); // Process the API data from the LearnToSkateUSA endpoint
-
-      for (const responseData of apiResponses) {
-        // Look for the specific GetPointsFromSearch endpoint which contains program data
-
-        if (
-          responseData.url &&
-          responseData.url.includes("GetPointsFromSearch")
-        ) {
-          try {
-            const data = JSON.parse(responseData.content);
-
-            if (data.programs && Array.isArray(data.programs)) {
-              console.log(
-                `Processing ${data.programs.length} programs from API response`
-              ); // Map each program by email for easy lookup
-
-              data.programs.forEach(
-                (program: {
-                  ProgramId?: string;
-
-                  OrganizationName?: string;
-
-                  OrganizationEmail?: string;
-
-                  OrganizationPhoneNumber?: string;
-
-                  Website?: string;
-
-                  City?: string;
-
-                  StateCode?: string;
-                }) => {
-                  if (program.OrganizationEmail) {
-                    const email = program.OrganizationEmail.toLowerCase(); // Clean up the website URL if needed
-
-                    let website = program.Website || "";
-
-                    if (website === "http://") {
-                      website = "";
-                    } // Construct full program name with location if available
-
-                    let displayName =
-                      program.OrganizationName || "Unknown Program";
-
-                    if (program.City && program.StateCode) {
-                      displayName = `${displayName} (${program.City}, ${program.StateCode})`;
-                    }
-
-                    apiProgramsMap.set(email, {
-                      name: displayName,
-
-                      website: website,
-
-                      phone: program.OrganizationPhoneNumber || "",
-                    });
-
-                    console.log(
-                      `Added API program: ${email} => ${displayName} | ${website}`
-                    );
-                  }
-                }
-              );
-            }
-          } catch (e) {
-            console.error(`Error parsing API response: ${e}`);
-          }
-        }
-      } // --- REVISED LOGIC: Build contacts DIRECTLY from the API Map ---
-
-      // Initialize the list for enhanced contacts
-      const enhancedContacts: ScrapedContact[] = [];
-
-      // Iterate through the verified programs found in the API response map
-      for (const [email, apiProgramInfo] of apiProgramsMap.entries()) {
+      } else {
         console.log(
-          `Processing verified API program for ${email}: Name='${apiProgramInfo.name}', Website='${apiProgramInfo.website}', Phone='${apiProgramInfo.phone}'`
+          "Could not find any GetPointsFromSearch API response in captured data."
         );
-
-        // Add the verified program to our results list
-        enhancedContacts.push({
-          email: email, // Use the email from the map key (already lowercased)
-          name: apiProgramInfo.name, // Use name from API
-          title: "Organization", // Default title
-          phone: apiProgramInfo.phone || "", // Use phone from API, default to empty string
-          url: apiProgramInfo.website || "", // Use website from API, default to empty string
-          source: "Learn to Skate USA API", // Mark as sourced from API
-        });
       }
 
-      // Create program information for raw display (using the correctly built enhancedContacts)
-      const formattedPrograms = enhancedContacts.map((contact) => ({
-        OrganizationName: contact.name,
+      // --- REMOVED OLD/REDUNDANT PROCESSING LOOPS ---
+      // The old loops using programsByEmail and apiProgramsMap are no longer needed
 
-        OrganizationEmail: contact.email,
-
-        OrganizationPhoneNumber: contact.phone || "",
-
-        Website: contact.url || "",
-      }));
-
+      // 5. Return the results built ONLY from the final API response
       return NextResponse.json({
         success: true,
-
-        emails: enhancedContacts,
-
-        programs: formattedPrograms, // Include the program data for raw display
-
-        message: `Found ${result.contacts.length} contacts via browser automation`,
+        emails: enhancedContacts, // Use the correctly built list
+        programs: formattedPrograms, // Use the correctly built list
+        message: `Found ${enhancedContacts.length} contacts from API.`, // Updated message
       });
     } catch (error) {
       console.error("Error during browser-based scraping:", error); // Return a more detailed error

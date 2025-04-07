@@ -4,9 +4,87 @@
  */
 import { ScrapedContact, ScrapingOptions } from "./types";
 import { extractEmails, processContactData } from "./emailExtractor";
-import { chromium as playwrightChromium, Browser } from "playwright";
+import {
+  chromium as playwrightChromium,
+  Browser,
+  BrowserContext,
+} from "playwright";
 import { extractObfuscatedEmails } from "./enhancedEmailExtractor";
 import chromium from "@sparticuz/chromium";
+
+// --- Keyword Definitions for Prioritization (User Specified) ---
+const COACH_KEYWORDS = [
+  "coach",
+  "staff",
+  "directory",
+  "instructor",
+  "trainer",
+  "team",
+  "roster",
+  "personnel",
+  "faculty",
+  "bios",
+];
+const CONTACT_KEYWORDS = [
+  "contact",
+  "kontakt",
+  "contacto",
+  "about",
+  "info",
+  "location",
+  "connect",
+  "reach",
+  "touch",
+];
+const SKATING_KEYWORDS = [
+  "skat", // skate, skating
+  "lesson",
+  "program",
+  "class",
+  "private",
+  "training",
+  "registration",
+  "schedule",
+  "level",
+  "hockey",
+  "figure", // figure skating
+  "learn", // learn-to-skate
+  "camp",
+  "clinic",
+];
+
+// --- Priorities ---
+const PRIORITY = {
+  // Lower number = higher priority
+  INITIAL: 0, // The starting URL itself
+  COACH: 1,
+  CONTACT: 2,
+  SKATING: 3,
+  OTHER: 4,
+};
+
+// --- Helper Function to Get Priority ---
+const getLinkPriority = (url: string, text: string): number => {
+  const lowerUrl = url.toLowerCase();
+  const lowerText = text ? text.toLowerCase() : ""; // Handle potentially null text
+  // Check in order of priority
+  if (
+    COACH_KEYWORDS.some((k) => lowerUrl.includes(k) || lowerText.includes(k))
+  ) {
+    return PRIORITY.COACH;
+  }
+  if (
+    CONTACT_KEYWORDS.some((k) => lowerUrl.includes(k) || lowerText.includes(k))
+  ) {
+    return PRIORITY.CONTACT;
+  }
+  if (
+    SKATING_KEYWORDS.some((k) => lowerUrl.includes(k) || lowerText.includes(k))
+  ) {
+    return PRIORITY.SKATING;
+  }
+  return PRIORITY.OTHER;
+};
 
 export class ImprovedPlaywrightScraper {
   private browser: Browser | null = null;
@@ -30,18 +108,18 @@ export class ImprovedPlaywrightScraper {
   ): Promise<ScrapedContact[]> {
     // Set defaults
     const mode = options.mode ?? "standard";
-    const timeout = options.timeout ?? 20000; // Reduced timeout for faster performance
+    const timeout = options.timeout ?? 30000; // Default timeout
 
     // Set depth, pages and links based on mode
     let maxDepth, maxPages, followLinks;
 
     if (mode === "aggressive") {
-      maxDepth = options.maxDepth ?? 2;
-      maxPages = options.maxPages ?? 10;
+      maxDepth = options.maxDepth ?? 3;
+      maxPages = options.maxPages ?? 20; // Aggressive page limit
       followLinks = options.followLinks ?? true;
     } else if (mode === "standard") {
-      maxDepth = options.maxDepth ?? 1;
-      maxPages = options.maxPages ?? 5;
+      maxDepth = options.maxDepth ?? 2;
+      maxPages = options.maxPages ?? 10; // Changed standard limit from 5 to 10
       followLinks = options.followLinks ?? true;
     } else {
       // Gentle mode
@@ -62,11 +140,12 @@ export class ImprovedPlaywrightScraper {
 
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
-    // Add priority to pendingUrls type definition
-    const pendingUrls: { url: string; depth: number; priority?: number }[] = [
-      { url, depth: 0, priority: 0 },
+    // Ensure pendingUrls type includes priority
+    const pendingUrls: { url: string; depth: number; priority: number }[] = [
+      { url, depth: 0, priority: PRIORITY.INITIAL }, // Start URL has highest priority
     ];
     let pagesVisited = 0; // Track how many pages we've visited
+    let context: BrowserContext | null = null; // Use BrowserContext type
 
     try {
       // Create browser if not already created
@@ -101,7 +180,7 @@ export class ImprovedPlaywrightScraper {
       }
 
       // Create context with default configuration
-      const context = await this.browser.newContext({
+      context = await this.browser.newContext({
         userAgent:
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
         viewport: { width: 1280, height: 800 },
@@ -113,11 +192,19 @@ export class ImprovedPlaywrightScraper {
 
       // Process URLs in queue (with page limit)
       while (pendingUrls.length > 0 && pagesVisited < maxPages) {
-        const { url: currentUrl, depth } = pendingUrls.shift()!;
+        // ** SORT QUEUE BY PRIORITY **
+        pendingUrls.sort((a, b) => {
+          if (a.priority !== b.priority) {
+            return a.priority - b.priority; // Lower priority number first
+          }
+          return a.depth - b.depth; // Then lower depth first
+        });
+
+        const { url: currentUrl, depth, priority } = pendingUrls.shift()!;
         if (visitedUrls.has(currentUrl)) continue;
 
         console.log(
-          `Processing URL (depth ${depth}): ${currentUrl} (${
+          `Processing URL (P${priority} | Depth ${depth}): ${currentUrl} (${
             pagesVisited + 1
           }/${maxPages})`
         );
@@ -389,158 +476,67 @@ export class ImprovedPlaywrightScraper {
           // If we need to follow links and we haven't reached max depth
           if (followLinks && depth < maxDepth) {
             // Extract links that might lead to contact information
-            const links = await page.$$eval("a[href]", (elements) => {
-              return elements
-                .map((el) => el.getAttribute("href"))
-                .filter((href): href is string => {
-                  // First ensure it's a non-null/empty string
-                  if (!href) return false;
-
-                  // Then filter out specific prefixes we want to exclude
-                  return (
-                    !href.startsWith("#") &&
-                    !href.startsWith("javascript:") &&
-                    !href.startsWith("mailto:") &&
-                    !href.startsWith("tel:")
-                  );
-                });
+            const linksData = await page.evaluate(() => {
+              return Array.from(document.querySelectorAll("a[href]")).map(
+                (a) => {
+                  const href = a.getAttribute("href");
+                  return {
+                    href: href ? href.trim() : "",
+                    text: a.textContent ? a.textContent.trim() : "",
+                  };
+                }
+              );
             });
 
-            // Filter and normalize the links
-            for (const link of links) {
-              try {
-                let fullUrl: string;
+            const originUrl = new URL(url).origin; // The *original* domain we started with
 
-                // Ensure full URL
-                if (link.startsWith("http")) {
-                  fullUrl = link;
-                } else if (link.startsWith("/")) {
-                  const urlObj = new URL(currentUrl);
-                  fullUrl = `${urlObj.origin}${link}`;
-                } else {
-                  const urlObj = new URL(currentUrl);
-                  const pathWithoutFile = urlObj.pathname
-                    .split("/")
-                    .slice(0, -1)
-                    .join("/");
-                  fullUrl = `${urlObj.origin}${pathWithoutFile}/${link}`;
-                }
-
-                // Prioritize "contact" and related pages with more detailed priority levels
-                const lowerPath = new URL(fullUrl).pathname.toLowerCase();
-
-                // Determine contact page priority (higher number = higher priority)
-                let priority = 0;
-
-                // Contact pages - highest priority
-                if (
-                  lowerPath.includes("contact") ||
-                  lowerPath.includes("kontakt") || // German
-                  lowerPath.includes("contacto") || // Spanish
-                  lowerPath.includes("get-in-touch") ||
-                  lowerPath === "/contact" ||
-                  lowerPath === "/contact-us" ||
-                  lowerPath.endsWith("/contact") ||
-                  lowerPath.endsWith("/contact-us")
-                ) {
-                  priority = 3; // Highest priority
-                }
-                // About/team/staff pages - second priority
-                else if (
-                  lowerPath.includes("about") ||
-                  lowerPath.includes("team") ||
-                  lowerPath.includes("staff") ||
-                  lowerPath.includes("people") ||
-                  lowerPath === "/about" ||
-                  lowerPath === "/about-us" ||
-                  lowerPath.endsWith("/about") ||
-                  lowerPath.endsWith("/about-us")
-                ) {
-                  priority = 2;
-                }
-                // Support and help pages - third priority
-                else if (
-                  lowerPath.includes("support") ||
-                  lowerPath.includes("help") ||
-                  lowerPath.includes("faq") ||
-                  lowerPath.includes("connect")
-                ) {
-                  priority = 1;
-                }
-
-                // The priority value determines processing order (no need for a separate isContactPage variable)
-
-                const sameDomain =
-                  new URL(fullUrl).hostname === new URL(currentUrl).hostname;
-
-                // Only follow links from the same domain
-                if (sameDomain && !visitedUrls.has(fullUrl)) {
-                  // Add pages to queue based on priority
-                  if (priority === 3) {
-                    // Contact pages - add to very front of queue (highest priority)
-                    console.log(
-                      `Adding contact page with highest priority: ${fullUrl}`
-                    );
-                    pendingUrls.unshift({
-                      url: fullUrl,
-                      depth: depth + 1,
-                    });
-                  } else if (priority === 2) {
-                    // About/Team pages - add just after any highest priority pages
-                    console.log(
-                      `Adding about/team page with high priority: ${fullUrl}`
-                    );
-
-                    // Find position after all priority 3 pages
-                    let insertPosition = 0;
-                    while (
-                      insertPosition < pendingUrls.length &&
-                      pendingUrls[insertPosition].priority === 3
-                    ) {
-                      insertPosition++;
-                    }
-
-                    pendingUrls.splice(insertPosition, 0, {
-                      url: fullUrl,
-                      depth: depth + 1,
-                      priority: 2, // Store priority for future reference
-                    });
-                  } else if (priority === 1) {
-                    // Support pages - medium priority
-                    console.log(
-                      `Adding support page with medium priority: ${fullUrl}`
-                    );
-
-                    // Find position after all priority 3 and 2 pages
-                    let insertPosition = 0;
-                    while (
-                      insertPosition < pendingUrls.length &&
-                      (pendingUrls[insertPosition].priority === 3 ||
-                        pendingUrls[insertPosition].priority === 2)
-                    ) {
-                      insertPosition++;
-                    }
-
-                    pendingUrls.splice(insertPosition, 0, {
-                      url: fullUrl,
-                      depth: depth + 1,
-                      priority: 1, // Store priority for future reference
-                    });
-                  } else {
-                    // Regular pages - lowest priority
-                    pendingUrls.push({
-                      url: fullUrl,
-                      depth: depth + 1,
-                      priority: 0, // Store priority for future reference
-                    });
-                  }
-                }
-                // eslint-disable-next-line @typescript-eslint/no-empty-function
-              } catch {
-                // Skip invalid URLs
-                console.log(`Invalid URL: ${link}`);
+            for (const linkData of linksData) {
+              if (
+                !linkData.href ||
+                linkData.href.startsWith("#") ||
+                linkData.href.startsWith("javascript:") ||
+                linkData.href.startsWith("mailto:") ||
+                linkData.href.startsWith("tel:")
+              ) {
+                continue;
               }
-            }
+
+              try {
+                const absoluteUrl = new URL(linkData.href, currentUrl)
+                  .toString()
+                  .split("#")[0];
+
+                // Stay within the original domain
+                if (new URL(absoluteUrl).origin !== originUrl) {
+                  continue;
+                }
+
+                // If not visited and not already pending
+                if (
+                  !visitedUrls.has(absoluteUrl) &&
+                  !pendingUrls.some((p) => p.url === absoluteUrl)
+                ) {
+                  // Calculate priority based on URL and link text
+                  const linkPriority = getLinkPriority(
+                    absoluteUrl,
+                    linkData.text
+                  );
+                  pendingUrls.push({
+                    url: absoluteUrl,
+                    depth: depth + 1,
+                    priority: linkPriority,
+                  });
+                  console.log(
+                    `  Added P${linkPriority} link: ${absoluteUrl} (from text: ${linkData.text.substring(
+                      0,
+                      30
+                    )}...)`
+                  );
+                }
+              } catch {
+                // console.warn(`Skipping invalid URL: ${linkData.href}`);
+              }
+            } // end for loop over links
           }
         } catch (error) {
           console.error(`Error processing ${currentUrl}: ${error}`);
@@ -611,17 +607,22 @@ export class ImprovedPlaywrightScraper {
       });
 
       // Close context but keep browser open for potential reuse
-      await context.close();
+      await context
+        .close()
+        .catch((e: Error) => console.error("Error closing context:", e));
 
       const finalContacts = Array.from(uniqueEmails.values());
       console.log(
         `Playwright found ${finalContacts.length} contacts for ${url}`
       );
       return finalContacts;
-    } catch (error) {
-      // Log the error, but return any contacts we found so far
-      console.error("Error in scrapeWebsite:", error);
-      return allContacts;
+    } catch (browserError) {
+      console.error("Browser error during scraping:", browserError);
+      throw browserError;
+    } finally {
+      console.log(
+        `Scraping finished for ${url}. Found ${allContacts.length} total contacts across ${pagesVisited} pages.`
+      );
     }
   }
 
