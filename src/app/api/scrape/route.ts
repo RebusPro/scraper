@@ -3,6 +3,9 @@ import { PlaywrightScraper } from "@/lib/scraper/playwrightScraper";
 import { ImprovedPlaywrightScraper } from "@/lib/scraper/improvedPlaywrightScraper";
 import { ScrapedContact, ScrapingResult } from "@/lib/scraper/types";
 
+// Increase the maximum execution duration for this function to 60 seconds (Vercel Pro plan)
+export const maxDuration = 60;
+
 // Define a settings input type
 type ScraperSettingsInput = {
   mode?: "standard" | "aggressive" | "gentle";
