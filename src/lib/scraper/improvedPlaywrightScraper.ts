@@ -114,12 +114,12 @@ export class ImprovedPlaywrightScraper {
     let maxDepth, maxPages, followLinks;
 
     if (mode === "aggressive") {
-      maxDepth = options.maxDepth ?? 3; // Use provided or default aggressive depth
-      maxPages = options.maxPages ?? 20; // Increased from 10 to 20
+      maxDepth = options.maxDepth ?? 3;
+      maxPages = options.maxPages ?? 20; // Aggressive page limit
       followLinks = options.followLinks ?? true;
     } else if (mode === "standard") {
-      maxDepth = options.maxDepth ?? 1;
-      maxPages = options.maxPages ?? 5;
+      maxDepth = options.maxDepth ?? 2;
+      maxPages = options.maxPages ?? 10; // Changed standard limit from 5 to 10
       followLinks = options.followLinks ?? true;
     } else {
       // Gentle mode

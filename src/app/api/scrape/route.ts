@@ -413,7 +413,7 @@ function applyModeSettings(url: string, settings: ScraperSettingsInput) {
     // Standard mode
     maxDepth = 2;
     followLinks = true;
-    timeout = 15000; // Reduced for faster processing
+    timeout = 25000; // Increased standard timeout from 15000 to 25000
     browserType = "chromium";
     includePhoneNumbers = true;
     useHeadless = true;

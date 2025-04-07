@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import ResultsDisplay from "@/components/ResultsDisplay"; // Reuse the results display
 import { ScrapingResult, ScrapedContact } from "@/lib/scraper/types"; // Import necessary types
+// Import export utilities
+import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
 
 // Define types for the data fetched from the APIs
 interface BatchSummary {
@@ -55,6 +57,9 @@ export default function HistoryPage() {
   const [hoveredUrls, setHoveredUrls] = useState<string[] | null>(null);
   const [isLoadingUrls, setIsLoadingUrls] = useState<boolean>(false);
   const [urlError, setUrlError] = useState<string | null>(null);
+
+  // Add state for history download status
+  const [isHistoryDownloading, setIsHistoryDownloading] = useState(false);
 
   // Calculate total pages
   const totalPages = Math.ceil(totalBatches / ITEMS_PER_PAGE);
@@ -170,13 +175,45 @@ export default function HistoryPage() {
     })
   );
 
-  // Placeholder download handler for ResultsDisplay prop requirement
-  const handleHistoryDownload = (format: "xlsx" | "csv") => {
-    console.log(
-      `Download requested for format: ${format} from history (not implemented)`
-    );
-    // TODO: Implement download logic for historical data if needed
-    alert("Download from history page is not yet implemented.");
+  // Implement the actual download logic
+  const handleHistoryDownload = async (format: "xlsx" | "csv") => {
+    if (!resultsForDisplay.length || !selectedBatchId) {
+      alert("No results to download for the selected batch.");
+      return;
+    }
+
+    setIsHistoryDownloading(true);
+    try {
+      // Format data similar to the main page export
+      const dataForExport = resultsForDisplay.flatMap(
+        (result) =>
+          result.contacts?.map((contact) => ({
+            Email: contact.email || "",
+            Name: contact.name || "",
+            "Title/Position": contact.title || "",
+            "Source Website": contact.source || result.url || "", // Use result.url if source isn't on contact
+            "Scrape Date": new Date(result.timestamp).toLocaleString(),
+          })) ?? []
+      );
+
+      if (dataForExport.length === 0) {
+        alert("No contacts found in the selected batch results to export.");
+        return;
+      }
+
+      const filename = `batch-${selectedBatchId.substring(0, 8)}-results`;
+
+      if (format === "xlsx") {
+        await exportToExcel(dataForExport, filename);
+      } else {
+        exportToCSV(dataForExport, filename);
+      }
+    } catch (error) {
+      console.error("Error exporting history data:", error);
+      alert("Failed to download history results. Please try again.");
+    } finally {
+      setIsHistoryDownloading(false);
+    }
   };
 
   // --- Pagination handlers ---
@@ -453,7 +490,7 @@ export default function HistoryPage() {
                   result={resultsForDisplay[0]}
                   allResults={resultsForDisplay}
                   onDownload={handleHistoryDownload}
-                  isDownloading={false}
+                  isDownloading={isHistoryDownloading}
                 />
               ) : (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
