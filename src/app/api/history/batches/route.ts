@@ -39,19 +39,36 @@ interface PaginatedBatchResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    // Get page and limit from query parameters, providing defaults
+    // Get page and limit from query parameters
     const searchParams = request.nextUrl.searchParams;
     const page = parseInt(searchParams.get("page") || "1", 10);
     const limit = parseInt(searchParams.get("limit") || "10", 10);
+    // Get optional date filters
+    const startDate = searchParams.get("startDate") || null; // Pass null if not present
+    const endDate = searchParams.get("endDate") || null;
 
     // Validate page and limit
     const validatedPage = Math.max(1, page);
     const validatedLimit = Math.max(1, Math.min(50, limit)); // Limit max page size
 
-    // Call the RPC function
+    // Basic validation for date strings (can be enhanced)
+    const isValidDate = (dateStr: string | null) => {
+      if (!dateStr) return true; // Null is valid (no filter)
+      return !isNaN(Date.parse(dateStr)); // Check if parsable
+    };
+
+    if (!isValidDate(startDate) || !isValidDate(endDate)) {
+      console.warn("Invalid date format received in query params");
+      // Optionally return an error, or proceed without date filters
+      // For now, let the RPC handle potential conversion issues if needed
+    }
+
+    // Call the RPC function, passing date filters
     const { data, error } = await supabase.rpc("get_batch_summaries", {
       page_num: validatedPage,
       page_size: validatedLimit,
+      start_date_text: startDate,
+      end_date_text: endDate,
     });
 
     if (error) {
