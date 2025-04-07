@@ -32,10 +32,12 @@ const qstashClient = new Client({
 });
 
 // Define the target URL for the worker function
-// IMPORTANT: This needs to be the publicly accessible URL of your deployment
-const WORKER_URL = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}/api/process-job` // Use Vercel's URL *with* https://
-  : process.env.QSTASH_WORKER_URL || "http://localhost:3000/api/process-job"; // Fallback to env var or localhost
+const productionUrl = process.env.PRODUCTION_URL; //  https://scraper-five-xi.vercel.app (Set in Vercel env vars)
+const localUrl = "http://localhost:3000";
+// Prioritize Production URL for the callback, otherwise use localhost for local dev
+const WORKER_URL = productionUrl
+  ? `${productionUrl}/api/process-job`
+  : `${localUrl}/api/process-job`;
 
 // Log the determined worker URL for debugging
 console.log("Using QStash Worker URL:", WORKER_URL);
