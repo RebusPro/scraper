@@ -33,13 +33,12 @@ const qstashClient = new Client({
 
 // Define the target URL for the worker function
 // IMPORTANT: This needs to be the publicly accessible URL of your deployment
-// For local testing, you might use ngrok or a similar tool
-// For Vercel, use your production URL (or preview URL for testing previews)
-const WORKER_URL =
-  process.env.NODE_ENV === "production"
-    ? `${process.env.VERCEL_URL}/api/process-job` // Vercel provides VEREL_URL
-    : "https://tunnel.devrepo.co/api/process-job"; // Replace if using ngrok locally
-// TODO: Make WORKER_URL more robust, possibly via another env var
+const WORKER_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}/api/process-job` // Use Vercel's URL *with* https://
+  : process.env.QSTASH_WORKER_URL || "http://localhost:3000/api/process-job"; // Fallback to env var or localhost
+
+// Log the determined worker URL for debugging
+console.log("Using QStash Worker URL:", WORKER_URL);
 
 export async function POST(request: NextRequest) {
   try {
