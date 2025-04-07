@@ -38,7 +38,7 @@ export default function Home() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [errors, setErrors] = useState<{ url: string; error: string }[]>([]);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
-  const pollingIntervalId = useRef<NodeJS.Timeout | null>(null); // Ref to store interval ID
+  const pollingIntervalId = useRef<NodeJS.Timeout | null>(null);
   const [scrapeSettings, setScrapeSettings] = useState({
     mode: "standard" as "standard" | "aggressive" | "gentle",
     maxDepth: 2,
@@ -49,13 +49,16 @@ export default function Home() {
   });
   const [showFeatureInfo, setShowFeatureInfo] = useState(false);
 
-  // --- New function to fetch batch status via polling ---
+  // --- Function to fetch batch status ---
+  // Ensure dependencies are correct for useCallback
   const fetchBatchStatus = useCallback(async () => {
+    // Read batchId directly from state within the function execution
+    // This avoids stale closure issues if we passed it as an arg
     if (!currentBatchId) {
-      console.log("Polling stopped: No Batch ID");
+      console.log("Polling check: No Batch ID, stopping.");
       if (pollingIntervalId.current) clearInterval(pollingIntervalId.current);
       pollingIntervalId.current = null;
-      setIsScrapingBatch(false); // Ensure scraping is marked as stopped
+      // setIsScrapingBatch(false); // Let useEffect handle this based on ID nullification
       return;
     }
 
@@ -65,33 +68,28 @@ export default function Home() {
         `/api/batch-status?batchId=${currentBatchId}`
       );
       if (!response.ok) {
-        // If API returns an error (e.g., 404, 500), stop polling
         console.error(`Error fetching batch status: ${response.status}`);
         throw new Error(`API error ${response.status}`);
       }
 
       const data: BatchStatusResponse = await response.json();
 
-      // Update results (replace current results with latest from status)
-      // The status API returns results including DB fields, map back to ScrapingResult
+      // ... (logic to update results and errors remains the same) ...
       const updatedResults: ScrapingResult[] = data.results.map((dbResult) => ({
         url: dbResult.url,
-        contacts: dbResult.contacts || [], // contacts are already parsed in the API response or null
-        timestamp: dbResult.created_at || new Date().toISOString(), // Use DB timestamp
+        contacts: dbResult.contacts || [],
+        timestamp: dbResult.created_at || new Date().toISOString(),
         status: dbResult.status,
         message: dbResult.error_message || undefined,
-        // stats can be recalculated or potentially added to DB later
         stats: {
           totalEmails: dbResult.contacts?.length || 0,
           totalWithNames:
             dbResult.contacts?.filter((c: ScrapedContact) => !!c.name).length ||
-            0, // Use ScrapedContact type
-          pagesScraped: 1, // Placeholder, might need adjustment if DB stores this
+            0,
+          pagesScraped: 1,
         },
       }));
       setResults(updatedResults);
-
-      // Update errors based on results with error status
       const updatedErrors = updatedResults
         .filter((r) => r.status === "error")
         .map((r) => ({ url: r.url, error: r.message || "Unknown error" }));
@@ -102,14 +100,14 @@ export default function Home() {
       setBatchProgress({ current: processedCount });
 
       // Check for completion
+      // Use a local variable for totalUrlsInBatch to avoid stale state in comparison
       if (totalUrlsInBatch > 0 && processedCount >= totalUrlsInBatch) {
         console.log(
           `Batch ${currentBatchId} completed. Processed ${processedCount}/${totalUrlsInBatch}. Stopping polling.`
         );
-        if (pollingIntervalId.current) clearInterval(pollingIntervalId.current);
-        pollingIntervalId.current = null;
+        // Reset state, which will trigger useEffect cleanup
         setIsScrapingBatch(false);
-        setCurrentBatchId(null); // Reset batch ID
+        setCurrentBatchId(null);
       } else {
         console.log(
           `Batch ${currentBatchId} progress: ${processedCount}/${totalUrlsInBatch}`
@@ -117,45 +115,78 @@ export default function Home() {
       }
     } catch (error) {
       console.error("Error during polling:", error);
-      // Stop polling on error to avoid infinite loops
-      if (pollingIntervalId.current) clearInterval(pollingIntervalId.current);
-      pollingIntervalId.current = null;
+      // Stop polling on error by resetting state
       setIsScrapingBatch(false);
       setCurrentBatchId(null);
-      // Potentially set a general error message for the user
       setErrors((prev) => [
         ...prev,
         { url: "Batch Status", error: "Failed to get updates." },
       ]);
     }
-  }, [currentBatchId, totalUrlsInBatch]); // Dependencies for useCallback
+  }, [currentBatchId, totalUrlsInBatch]); // Keep dependencies
 
-  // --- Effect to handle polling interval cleanup on unmount ---
+  // --- Effect to manage polling interval ---
   useEffect(() => {
-    // Clear interval when component unmounts or when scraping finishes
-    return () => {
+    if (isScrapingBatch && currentBatchId) {
+      // Scraping started and we have a batch ID
+      console.log(
+        `useEffect: Scraping started for Batch ID ${currentBatchId}. Setting up polling.`
+      );
+
+      // Clear any previous interval just in case
       if (pollingIntervalId.current) {
         clearInterval(pollingIntervalId.current);
       }
+
+      // Fetch status immediately when starting
+      fetchBatchStatus();
+
+      // Start the interval
+      pollingIntervalId.current = setInterval(fetchBatchStatus, 5000);
+    } else {
+      // Scraping stopped or no batch ID
+      console.log(
+        `useEffect: Scraping stopped or no Batch ID. Clearing interval.`
+      );
+      if (pollingIntervalId.current) {
+        clearInterval(pollingIntervalId.current);
+        pollingIntervalId.current = null;
+      }
+    }
+
+    // Cleanup function for when the component unmounts or dependencies change
+    return () => {
+      console.log("useEffect cleanup: Clearing interval.");
+      if (pollingIntervalId.current) {
+        clearInterval(pollingIntervalId.current);
+        pollingIntervalId.current = null;
+      }
     };
-  }, []);
+  }, [isScrapingBatch, currentBatchId, fetchBatchStatus]); // Dependencies control when this effect re-runs
 
   // Handle batch scraping from Excel/CSV file
   const handleBatchScrape = async (urlList: string[]) => {
+    // Prevent duplicate submissions if already scraping
+    if (isScrapingBatch) {
+      console.log("Scraping already in progress. Ignoring duplicate request.");
+      return;
+    }
+
     if (!urlList || urlList.length === 0) return;
 
-    // Make sure we have an array even for a single URL
     const urls = Array.isArray(urlList) ? urlList : [urlList];
 
     // --- Reset state for new batch ---
+    // Set loading FIRST to prevent double clicks more effectively
     setIsScrapingBatch(true);
-    setTotalUrlsInBatch(urls.length); // Store total
-    setBatchProgress({ current: 0 }); // Reset current count
+    setTotalUrlsInBatch(urls.length);
+    setBatchProgress({ current: 0 });
     setResults([]);
     setErrors([]);
-    setCurrentBatchId(null); // Clear previous batch ID
+    setCurrentBatchId(null); // Clear previous ID before getting new one
 
-    // --- Clear any existing polling interval ---
+    // --- Clear any lingering interval manually just in case ---
+    // (Although useEffect should handle this)
     if (pollingIntervalId.current) {
       clearInterval(pollingIntervalId.current);
       pollingIntervalId.current = null;
@@ -174,42 +205,40 @@ export default function Home() {
         }),
       });
 
-      // Check for 202 Accepted status
       if (response.status !== 202) {
         throw new Error(`API returned status ${response.status}`);
       }
 
-      // --- Process response, get Batch ID, start polling ---
+      // --- Get Batch ID and trigger useEffect by setting state ---
       const submitResponse = await response.json();
       if (submitResponse.batchId) {
         console.log(
-          `Batch submitted successfully. Batch ID: ${submitResponse.batchId}`
+          `Batch submitted successfully. Setting Batch ID: ${submitResponse.batchId}`
         );
+        // Setting the batch ID here will trigger the useEffect to start polling
         setCurrentBatchId(submitResponse.batchId);
-
-        // Start polling immediately and then every 5 seconds
-        fetchBatchStatus(); // Initial fetch
-        pollingIntervalId.current = setInterval(fetchBatchStatus, 5000);
+        // REMOVED interval setup from here
       } else {
         throw new Error("API did not return a batchId");
       }
     } catch (error) {
-      console.error("Error in batch scrape submission:", error); // Updated error context
-      setIsScrapingBatch(false);
-      // Display a general error message
+      console.error("Error in batch scrape submission:", error);
+      setIsScrapingBatch(false); // Turn off loading on error
+      setCurrentBatchId(null); // Clear batch ID on error
       const batchResults: ScrapingResult[] = urls.map((url) => ({
-        // Keep this for initial error display
         url,
         contacts: [],
         timestamp: new Date().toISOString(),
         status: "error",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message:
+          error instanceof Error ? error.message : "Unknown submission error",
       }));
       setResults(batchResults);
       setErrors(
         urls.map((url) => ({
           url,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error:
+            error instanceof Error ? error.message : "Unknown submission error",
         }))
       );
     }
@@ -254,20 +283,10 @@ export default function Home() {
   // Handle cancellation of scraping
   const handleCancelScraping = async () => {
     console.log("Cancel requested by user.");
-    // Stop the frontend polling
-    if (pollingIntervalId.current) {
-      clearInterval(pollingIntervalId.current);
-      pollingIntervalId.current = null;
-    }
-    // Reset state
+    // Resetting state will trigger useEffect cleanup to stop polling
     setIsScrapingBatch(false);
     setCurrentBatchId(null);
-
-    // Optional TODO: Add an API call here to inform the backend
-    // (e.g., `/api/cancel-batch?batchId=...`) which could potentially
-    // flag the batch in the DB or attempt to cancel pending QStash jobs.
-    // This is more complex and might not be necessary if simply stopping
-    // the frontend polling and result aggregation is sufficient.
+    // Optional TODO remains the same
   };
 
   return (
