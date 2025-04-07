@@ -13,7 +13,7 @@ import { ScrapedContact } from "@/lib/scraper/types";
 import { NextRequest, NextResponse } from "next/server";
 
 // Increase the maximum execution duration for this function to 60 seconds (Vercel Pro plan)
-export const maxDuration = 60;
+export const maxDuration = 180; // Increase to 3 minutes for interactive scrape
 
 // Type definitions for program information
 
