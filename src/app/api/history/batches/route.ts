@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 // Initialize Supabase client
@@ -23,62 +23,64 @@ interface BatchSummary {
   // We can add totalUrls later if we store it separately
 }
 
-export async function GET() {
+// Define the structure returned by the RPC function
+interface RpcBatchResult {
+  batch_id: string;
+  start_time: string; // Supabase returns timestamptz as string
+  processed_count: number; // bigint can usually be handled as number in JS
+  total_batches: number; // bigint
+}
+
+// Define response structure including total count
+interface PaginatedBatchResponse {
+  batches: BatchSummary[];
+  totalCount: number;
+}
+
+export async function GET(request: NextRequest) {
   try {
-    // Query to get distinct batch_ids, the min created_at (start time),
-    // and the count of records for each batch_id.
-    const { data, error } = await supabase
-      .from("scraping_results")
-      .select("batch_id, created_at") // Select necessary fields for aggregation
-      // Note: Supabase JS client might not directly support complex GROUP BY + MIN/COUNT.
-      // A database function or view might be more performant, but let's try processing here.
-      .order("created_at", { ascending: false }); // Get all records ordered
+    // Get page and limit from query parameters, providing defaults
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get("page") || "1", 10);
+    const limit = parseInt(searchParams.get("limit") || "10", 10);
+
+    // Validate page and limit
+    const validatedPage = Math.max(1, page);
+    const validatedLimit = Math.max(1, Math.min(50, limit)); // Limit max page size
+
+    // Call the RPC function
+    const { data, error } = await supabase.rpc("get_batch_summaries", {
+      page_num: validatedPage,
+      page_size: validatedLimit,
+    });
 
     if (error) {
-      console.error("Database error fetching batch history:", error);
+      console.error("Database RPC error fetching batch history:", error);
       throw error;
     }
 
-    if (!data) {
-      return NextResponse.json({ batches: [] });
+    if (!data || data.length === 0) {
+      return NextResponse.json({ batches: [], totalCount: 0 });
     }
 
-    // Process the data in code to get the summary
-    const batchMap = new Map<
-      string,
-      { startTime: string; processedCount: number }
-    >();
+    // Extract total count from the first row
+    const totalCount = data[0].total_batches;
 
-    data.forEach((row) => {
-      const existing = batchMap.get(row.batch_id);
-      if (existing) {
-        existing.processedCount += 1;
-        // Update startTime if this row is earlier
-        if (new Date(row.created_at) < new Date(existing.startTime)) {
-          existing.startTime = row.created_at;
-        }
-      } else {
-        batchMap.set(row.batch_id, {
-          startTime: row.created_at,
-          processedCount: 1,
-        });
-      }
-    });
+    // Map the data to the BatchSummary format
+    const batchSummaries: BatchSummary[] = data.map((row: RpcBatchResult) => ({
+      batchId: row.batch_id,
+      startTime: row.start_time,
+      processedCount: row.processed_count,
+    }));
 
-    // Convert map to array
-    const batchSummaries: BatchSummary[] = Array.from(batchMap.entries())
-      .map(([batchId, summary]) => ({
-        batchId,
-        ...summary,
-      }))
-      .sort(
-        (a, b) =>
-          new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
-      ); // Sort newest first
+    const response: PaginatedBatchResponse = {
+      batches: batchSummaries,
+      totalCount: totalCount,
+    };
 
-    return NextResponse.json({ batches: batchSummaries });
+    return NextResponse.json(response);
   } catch (error) {
-    console.error("Error fetching batch history:", error);
+    console.error("Error fetching paginated batch history:", error);
     return NextResponse.json(
       { error: "Failed to fetch batch history" },
       { status: 500 }
