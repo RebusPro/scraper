@@ -182,6 +182,14 @@ export async function POST(request: NextRequest) {
           }); // Check if the API response contains program data
 
           if (apiData && apiData.programs && Array.isArray(apiData.programs)) {
+            // Add detailed logging for Vercel debugging
+            console.log(
+              `VERCEL_DEBUG: Received ${
+                apiData.programs?.length ?? 0
+              } programs from LearnToSkate API. First few:`,
+              JSON.stringify(apiData.programs?.slice(0, 5), null, 2)
+            );
+
             console.log(
               `Found ${apiData.programs.length} programs in API response`
             ); // HARDCODED EXAMPLE: If programs array exists, log the EXACT structure of the first one
