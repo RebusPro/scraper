@@ -144,7 +144,7 @@ export class ImprovedPlaywrightScraper {
     const pendingUrls: { url: string; depth: number; priority: number }[] = [
       { url, depth: 0, priority: PRIORITY.INITIAL }, // Start URL has highest priority
     ];
-    let pagesVisited = 0; // Track how many pages we've visited
+    let pagesVisited = 0;
     let context: BrowserContext | null = null; // Use BrowserContext type
 
     try {
@@ -156,7 +156,7 @@ export class ImprovedPlaywrightScraper {
 
         if (process.env.VERCEL === "1") {
           console.log(
-            "Vercel environment detected. Launching Playwright Chromium with @sparticuz/chromium..."
+            "SCRAPER_DEBUG: Vercel env - preparing sparticuz launch options..."
           );
           const executablePath = await chromium.executablePath();
           if (!executablePath) {
@@ -169,26 +169,35 @@ export class ImprovedPlaywrightScraper {
             executablePath: executablePath,
             headless: true, // Force headless on Vercel
           };
+          console.log(
+            "SCRAPER_DEBUG: Vercel env - sparticuz launch options prepared."
+          );
         } else {
           console.log(
-            "Local environment detected. Launching Playwright Chromium with default settings..."
+            "SCRAPER_DEBUG: Local env - preparing default launch options..."
           );
-          // No specific executablePath needed locally, Playwright finds its cache
+          // No specific executablePath needed locally
         }
 
+        console.log("SCRAPER_DEBUG: Launching browser...");
         this.browser = await playwrightChromium.launch(launchOptions);
+        console.log("SCRAPER_DEBUG: Browser launched successfully.");
       }
 
       // Create context with default configuration
+      console.log("SCRAPER_DEBUG: Creating browser context...");
       context = await this.browser.newContext({
         userAgent:
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
         viewport: { width: 1280, height: 800 },
         javaScriptEnabled: true,
       });
+      console.log("SCRAPER_DEBUG: Browser context created.");
 
       // Create a new page
+      console.log("SCRAPER_DEBUG: Creating new page...");
       const page = await context.newPage();
+      console.log("SCRAPER_DEBUG: New page created.");
 
       // Process URLs in queue (with page limit)
       while (pendingUrls.length > 0 && pagesVisited < maxPages) {
@@ -200,15 +209,15 @@ export class ImprovedPlaywrightScraper {
           return a.depth - b.depth; // Then lower depth first
         });
 
-        const { url: currentUrl, depth, priority } = pendingUrls.shift()!;
+        const { url: currentUrl, depth } = pendingUrls.shift()!;
         if (visitedUrls.has(currentUrl)) continue;
 
         console.log(
-          `Processing URL (P${priority} | Depth ${depth}): ${currentUrl} (${
+          `SCRAPER_DEBUG: Starting processing loop for URL: ${currentUrl} (Depth: ${depth}) (${
             pagesVisited + 1
           }/${maxPages})`
         );
-        pagesVisited++; // Increment page counter
+        pagesVisited++;
         visitedUrls.add(currentUrl);
 
         // Skip non-http URLs and known file types that don't contain emails
@@ -240,16 +249,27 @@ export class ImprovedPlaywrightScraper {
 
           while (!success && retryCount < maxRetries) {
             try {
+              console.log(
+                `SCRAPER_DEBUG: Attempting page.goto for ${currentUrl}...`
+              );
               await page.goto(currentUrl, {
                 waitUntil: "domcontentloaded",
                 timeout: timeout,
               });
+              console.log(
+                `SCRAPER_DEBUG: page.goto successful for ${currentUrl}.`
+              );
 
               // Wait for content to load with reduced timeout
+              console.log(`SCRAPER_DEBUG: Waiting for network idle...`);
               await page
                 .waitForLoadState("networkidle", { timeout: 5000 })
-                .catch(() => {});
-
+                .catch(() => {
+                  console.log(
+                    `SCRAPER_DEBUG: Network idle wait timed out or failed for ${currentUrl} (continuing anyway)`
+                  );
+                });
+              console.log(`SCRAPER_DEBUG: Network idle wait finished.`);
               success = true;
             } catch (error) {
               console.log(
@@ -449,10 +469,11 @@ export class ImprovedPlaywrightScraper {
           }
 
           // Extract emails using universal techniques that work on ANY website
-          console.log("Extracting emails from page content");
+          console.log(`SCRAPER_DEBUG: Extracting content for ${currentUrl}...`);
+          const content = await page.content();
+          console.log(`SCRAPER_DEBUG: Content extracted for ${currentUrl}.`);
 
           // 1. Extract standard emails from page content
-          const content = await page.content();
           const standardEmails = extractEmails(content);
 
           // Process standard emails into contacts
@@ -539,11 +560,17 @@ export class ImprovedPlaywrightScraper {
             } // end for loop over links
           }
         } catch (error) {
-          console.error(`Error processing ${currentUrl}: ${error}`);
+          console.error(
+            `SCRAPER_ERROR: Error processing page ${currentUrl}: ${error}`
+          );
         }
+        console.log(
+          `SCRAPER_DEBUG: Finished processing loop for URL: ${currentUrl}`
+        );
       }
 
       // Filter out duplicate emails
+      console.log("SCRAPER_DEBUG: Deduplicating contacts...");
       const uniqueEmails = new Map<string, ScrapedContact>();
       allContacts.forEach((contact) => {
         if (contact.email) {
@@ -605,11 +632,16 @@ export class ImprovedPlaywrightScraper {
           }
         }
       });
+      console.log("SCRAPER_DEBUG: Deduplication finished.");
 
       // Close context but keep browser open for potential reuse
+      console.log("SCRAPER_DEBUG: Closing context...");
       await context
         .close()
-        .catch((e: Error) => console.error("Error closing context:", e));
+        .catch((e: Error) =>
+          console.error("SCRAPER_ERROR: Error closing context:", e)
+        );
+      console.log("SCRAPER_DEBUG: Context closed.");
 
       const finalContacts = Array.from(uniqueEmails.values());
       console.log(
