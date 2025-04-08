@@ -194,7 +194,8 @@ export default function Home() {
     }
 
     try {
-      // --- Call the new submit-batch API ---
+      // Inside handleBatchScrape, before fetch:
+      console.log("Sending settings:", scrapeSettings);
       const response = await fetch("/api/submit-batch", {
         method: "POST",
         headers: {
