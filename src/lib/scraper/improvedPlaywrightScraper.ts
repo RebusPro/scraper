@@ -140,12 +140,22 @@ export class ImprovedPlaywrightScraper {
 
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
-    // Ensure pendingUrls type includes priority
     const pendingUrls: { url: string; depth: number; priority: number }[] = [
-      { url, depth: 0, priority: PRIORITY.INITIAL }, // Start URL has highest priority
+      { url, depth: 0, priority: PRIORITY.INITIAL },
     ];
     let pagesVisited = 0;
-    let context: BrowserContext | null = null; // Use BrowserContext type
+    let context: BrowserContext | null = null;
+
+    // <<< ADDED: Overall Job Timeout Logic >>>
+    const jobStartTime = Date.now();
+    // Use worker timeout if passed, default to slightly less than common queue message visibility timeouts (e.g., 5 mins)
+    const jobTimeout = options.timeout ?? 300000; // Default 5 minutes (300,000 ms)
+    console.log(
+      `WORKER_BACKGROUND: Overall job timeout set to ${
+        jobTimeout / 1000
+      } seconds.`
+    );
+    // <<< END ADDED >>>
 
     try {
       // Create browser if not already created
@@ -239,6 +249,20 @@ export class ImprovedPlaywrightScraper {
 
       // Process URLs in queue (with page limit)
       while (pendingUrls.length > 0 && pagesVisited < maxPages) {
+        // <<< ADDED: Overall Job Timeout Check >>>
+        const elapsedTime = Date.now() - jobStartTime;
+        if (elapsedTime >= jobTimeout) {
+          console.warn(
+            `WORKER_BACKGROUND_WARN: Overall job timeout (${
+              jobTimeout / 1000
+            }s) exceeded. Stopping scrape. Pages visited: ${pagesVisited}. Queue size: ${
+              pendingUrls.length
+            }.`
+          );
+          break; // Exit the main processing loop
+        }
+        // <<< END ADDED >>>
+
         // ** SORT QUEUE BY PRIORITY **
         pendingUrls.sort((a, b) => {
           if (a.priority !== b.priority) {
@@ -288,37 +312,52 @@ export class ImprovedPlaywrightScraper {
           while (!success && retryCount < maxRetries) {
             try {
               console.log(
-                `SCRAPER_DEBUG: Attempting page.goto for ${currentUrl}...`
+                `SCRAPER_DEBUG: Attempting page.goto for ${currentUrl} (Retry: ${retryCount})...`
               );
               await page.goto(currentUrl, {
-                waitUntil: "domcontentloaded",
-                timeout: timeout,
+                waitUntil: "load",
+                timeout: 60000,
               });
               console.log(
                 `SCRAPER_DEBUG: page.goto successful for ${currentUrl}.`
               );
-
-              // Wait for content to load with reduced timeout
-              console.log(`SCRAPER_DEBUG: Waiting for network idle...`);
-              await page
-                .waitForLoadState("networkidle", { timeout: 5000 })
-                .catch(() => {
-                  console.log(
-                    `SCRAPER_DEBUG: Network idle wait timed out or failed for ${currentUrl} (continuing anyway)`
-                  );
-                });
-              console.log(`SCRAPER_DEBUG: Network idle wait finished.`);
               success = true;
             } catch (error) {
               console.log(
-                `Retry ${retryCount + 1} for ${currentUrl}: ${error}`
+                `Retry ${
+                  retryCount + 1
+                }/${maxRetries} for ${currentUrl} failed: ${
+                  error instanceof Error ? error.message.split("\n")[0] : error
+                }`
               );
               retryCount++;
               if (retryCount >= maxRetries) {
+                console.error(
+                  `SCRAPER_ERROR: All navigation retries failed for ${currentUrl}. Skipping page.`
+                );
                 throw error;
               }
-              // Wait between retries
-              await new Promise((resolve) => setTimeout(resolve, 2000));
+              await new Promise((resolve) =>
+                setTimeout(resolve, 1000 * retryCount)
+              );
+            }
+          }
+
+          if (success) {
+            console.log(
+              `SCRAPER_DEBUG: Attempting short network idle wait (max 3s)...`
+            );
+            try {
+              await page.waitForLoadState("networkidle", { timeout: 3000 });
+              console.log(`SCRAPER_DEBUG: Network idle finished or timed out.`);
+            } catch (idleError) {
+              console.log(
+                `SCRAPER_DEBUG: Network idle wait failed (expected sometimes): ${
+                  idleError instanceof Error
+                    ? idleError.message.split("\n")[0]
+                    : idleError
+                }`
+              );
             }
           }
 
