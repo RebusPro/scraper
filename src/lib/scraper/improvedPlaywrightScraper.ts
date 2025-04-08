@@ -162,7 +162,24 @@ export class ImprovedPlaywrightScraper {
           console.log(
             "SCRAPER_DEBUG: Serverless environment (Vercel or Cloud Run) detected. Preparing sparticuz launch options..."
           );
-          const executablePath = await chromium.executablePath();
+
+          // <<< Log before executablePath >>>
+          console.log("SCRAPER_DEBUG: Calling chromium.executablePath()...");
+          let executablePath: string | null = null; // Initialize as null
+          try {
+            executablePath = await chromium.executablePath();
+            // <<< Log after executablePath success >>>
+            console.log(
+              `SCRAPER_DEBUG: chromium.executablePath() returned: ${executablePath}`
+            );
+          } catch (err) {
+            console.error(
+              "SCRAPER_ERROR: Failed to get executablePath from sparticuz:",
+              err
+            );
+            throw err; // Rethrow
+          }
+
           if (!executablePath) {
             throw new Error(
               "Could not find Chromium executable via @sparticuz/chromium. Check deployment."
@@ -175,7 +192,8 @@ export class ImprovedPlaywrightScraper {
             headless: true, // Force headless in serverless
           };
           console.log(
-            "SCRAPER_DEBUG: Serverless env - sparticuz launch options prepared."
+            "SCRAPER_DEBUG: Serverless env - sparticuz launch options prepared:" +
+              JSON.stringify(launchOptions)
           );
         } else {
           console.log(
@@ -188,9 +206,13 @@ export class ImprovedPlaywrightScraper {
           "SCRAPER_DEBUG: Launching browser with options:",
           JSON.stringify(launchOptions)
         ); // Log options
+
+        // <<< Log before launch >>>
+        console.log("SCRAPER_DEBUG: Calling playwrightChromium.launch()...");
         try {
           this.browser = await playwrightChromium.launch(launchOptions);
-          console.log("SCRAPER_DEBUG: Browser launched successfully.");
+          // <<< Log after launch success >>>
+          console.log("SCRAPER_DEBUG: playwrightChromium.launch() successful.");
         } catch (launchError) {
           console.error(
             "SCRAPER_FATAL_ERROR: Failed to launch browser:",
