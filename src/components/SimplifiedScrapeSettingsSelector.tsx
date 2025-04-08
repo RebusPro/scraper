@@ -34,7 +34,7 @@ export default function SimplifiedScrapeSettingsSelector({
     followLinks: true,
     includePhoneNumbers: true,
     browserType: "chromium",
-    timeout: 30000,
+    timeout: 90000,
   };
 
   const aggressiveSettings: ScraperSettings = {
@@ -43,7 +43,7 @@ export default function SimplifiedScrapeSettingsSelector({
     followLinks: true,
     includePhoneNumbers: true,
     browserType: "chromium",
-    timeout: 60000, // Increased timeout for dynamic sites
+    timeout: 120000,
   };
 
   const gentleSettings: ScraperSettings = {
@@ -51,8 +51,8 @@ export default function SimplifiedScrapeSettingsSelector({
     maxDepth: 1,
     followLinks: false,
     includePhoneNumbers: true,
-    browserType: "firefox",
-    timeout: 20000,
+    browserType: "chromium",
+    timeout: 45000,
   };
 
   // Handle mode change
