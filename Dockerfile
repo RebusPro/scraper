@@ -35,24 +35,21 @@ COPY tsconfig.worker.json ./
 # 5. Install dependencies
 RUN npm ci
 
-# 7. Install npm dependencies
-RUN npm ci
+# 6. Install Playwright browsers and dependencies
+RUN npx playwright install chromium --with-deps
 
-# 7.1 Install Playwright browsers and dependencies
-RUN npx playwright install --with-deps chromium # Or install all: RUN npx playwright install --with-deps
-
-# 8. Copy source files needed for the worker
+# 7. Copy source files needed for the worker
 COPY worker.ts ./
 COPY src/lib ./src/lib
 
-# 9. Build TypeScript
+# 8. Build TypeScript
 RUN npm run build:worker
 
-# 10. Prune dev dependencies (optional, makes image smaller)
+# 9. Prune dev dependencies (optional, makes image smaller)
 RUN npm prune --production
 
-# 11. Expose port
+# 10. Expose port
 EXPOSE 3001
 
-# 12. Start the worker
+# 11. Start the worker
 CMD [ "node", "dist/worker.js" ]

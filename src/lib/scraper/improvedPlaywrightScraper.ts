@@ -170,33 +170,10 @@ export class ImprovedPlaywrightScraper {
           console.log(
             "SCRAPER_DEBUG: Production env - preparing sparticuz launch options..."
           );
-          let executablePath: string | null = null;
-          try {
-            console.log(
-              "SCRAPER_DEBUG: Attempting chromium.executablePath()..."
-            );
-            executablePath = await chromium.executablePath();
-            console.log(
-              `SCRAPER_DEBUG: chromium.executablePath() successful: ${
-                executablePath ? "Path found" : "Path NOT found"
-              }`
-            );
-          } catch (execPathError) {
-            console.error(
-              "SCRAPER_FATAL_ERROR: Failed during chromium.executablePath():",
-              execPathError
-            );
-            throw execPathError; // Re-throw to stop execution
-          }
 
-          if (!executablePath) {
-            throw new Error(
-              "SCRAPER_FATAL_ERROR: Could not find Chromium executable via @sparticuz/chromium."
-            );
-          }
+          // Production-specific launch options
           launchOptions = {
             args: [
-              ...chromium.args,
               "--no-sandbox",
               "--disable-setuid-sandbox",
               "--disable-dev-shm-usage",
@@ -205,12 +182,37 @@ export class ImprovedPlaywrightScraper {
               "--window-size=1920,1080",
               "--disable-blink-features=AutomationControlled",
             ],
-            executablePath: executablePath,
-            headless: true, // Force headless in production
-            timeout: launchTimeout, // Use the calculated launch timeout
+            headless: true,
+            timeout: launchTimeout,
           };
+
+          // Try to get executable path, but don't fail if we can't
+          try {
+            console.log(
+              "SCRAPER_DEBUG: Attempting to get Chromium executable path..."
+            );
+            const executablePath = await chromium.executablePath();
+            if (executablePath) {
+              console.log(
+                "SCRAPER_DEBUG: Using Chromium executable path:",
+                executablePath
+              );
+              launchOptions.executablePath = executablePath;
+            } else {
+              console.log(
+                "SCRAPER_DEBUG: No Chromium executable path found, using default"
+              );
+            }
+          } catch (error) {
+            console.log(
+              "SCRAPER_DEBUG: Could not get Chromium executable path, using default:",
+              error
+            );
+          }
+
           console.log(
-            "SCRAPER_DEBUG: Production env - sparticuz launch options prepared."
+            "SCRAPER_DEBUG: Production launch options prepared:",
+            JSON.stringify(launchOptions)
           );
         } else {
           console.log(
@@ -242,7 +244,7 @@ export class ImprovedPlaywrightScraper {
           );
         } catch (launchError) {
           console.error(
-            `SCRAPER_FATAL_ERROR: Failed during playwrightChromium.launch() (attempt 1):`,
+            `SCRAPER_FATAL_ERROR: Failed during playwrightChromium.launch():`,
             launchError
           );
 
