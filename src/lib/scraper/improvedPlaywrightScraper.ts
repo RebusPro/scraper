@@ -195,7 +195,16 @@ export class ImprovedPlaywrightScraper {
             );
           }
           launchOptions = {
-            args: chromium.args,
+            args: [
+              ...chromium.args,
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+              "--disable-dev-shm-usage",
+              "--disable-accelerated-2d-canvas",
+              "--disable-gpu",
+              "--window-size=1920,1080",
+              "--disable-blink-features=AutomationControlled",
+            ],
             executablePath: executablePath,
             headless: true, // Force headless in production
             timeout: launchTimeout, // Use the calculated launch timeout
@@ -207,6 +216,18 @@ export class ImprovedPlaywrightScraper {
           console.log(
             "SCRAPER_DEBUG: Local/Dev env - preparing default launch options..."
           );
+          launchOptions = {
+            ...launchOptions,
+            args: [
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+              "--disable-dev-shm-usage",
+              "--disable-accelerated-2d-canvas",
+              "--disable-gpu",
+              "--window-size=1920,1080",
+              "--disable-blink-features=AutomationControlled",
+            ],
+          };
         }
 
         console.log(
@@ -224,40 +245,28 @@ export class ImprovedPlaywrightScraper {
             `SCRAPER_FATAL_ERROR: Failed during playwrightChromium.launch() (attempt 1):`,
             launchError
           );
-          // Don't retry if using sparticuz failed, as args are likely optimal already.
-          // Retry only for local/dev environment if the first attempt failed without specific args.
-          if (process.env.NODE_ENV !== "production") {
+
+          // Try a fallback launch with minimal options
+          console.log(
+            "SCRAPER_DEBUG: Retrying browser launch with minimal options..."
+          );
+          const minimalOptions = {
+            args: ["--no-sandbox", "--disable-setuid-sandbox"],
+            headless: true,
+            timeout: launchTimeout,
+          };
+
+          try {
+            this.browser = await playwrightChromium.launch(minimalOptions);
             console.log(
-              "SCRAPER_DEBUG: Retrying browser launch with fallback options (--no-sandbox)..."
+              "SCRAPER_DEBUG: playwrightChromium.launch() successful with minimal options."
             );
-            const fallbackOptions = {
-              ...launchOptions, // Start with original options for local
-              args: [
-                ...(launchOptions.args || []),
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-              ],
-              timeout: launchTimeout, // Ensure timeout is applied to retry
-            };
-            console.log(
-              "SCRAPER_DEBUG: Attempting playwrightChromium.launch() with fallback options:",
-              JSON.stringify(fallbackOptions)
+          } catch (retryError) {
+            console.error(
+              `SCRAPER_FATAL_ERROR: Failed during playwrightChromium.launch() (attempt 2 with minimal options):`,
+              retryError
             );
-            try {
-              this.browser = await playwrightChromium.launch(fallbackOptions);
-              console.log(
-                "SCRAPER_DEBUG: playwrightChromium.launch() successful with fallback options."
-              );
-            } catch (retryError) {
-              console.error(
-                `SCRAPER_FATAL_ERROR: Failed during playwrightChromium.launch() (attempt 2 with fallback):`,
-                retryError
-              );
-              throw retryError; // Re-throw the error after second failure
-            }
-          } else {
-            // If sparticuz failed, re-throw the original error, no retry needed.
-            throw launchError;
+            throw retryError;
           }
         }
       } // end if (!this.browser)
