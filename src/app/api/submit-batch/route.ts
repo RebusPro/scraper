@@ -31,7 +31,8 @@ const qstashClient = new Client({
   token: process.env.QSTASH_TOKEN,
 });
 
-const productionUrl = "https://scraper-five-xi.vercel.app/api/process-job";
+const productionUrl =
+  "https://scraper-worker-964726998539.us-central1.run.app/api/process-job";
 // const localUrl = "http://localhost:3000/api/process-job"; // Adjust port if needed
 const localUrl =
   "https://excited-ghastly-alpaca.ngrok-free.app/api/process-job";
