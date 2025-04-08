@@ -109,7 +109,12 @@ export class ImprovedPlaywrightScraper {
   ): Promise<ScrapedContact[]> {
     // Set defaults
     const mode = options.mode ?? "standard";
-    const timeout = options.timeout ?? 60000; // Increased default timeout from 30000 to 60000
+    const timeout = options.timeout ?? 60000; // Use provided timeout or default to 60s
+
+    // Log the effective timeout being used
+    console.log(
+      `SCRAPER_INFO: Effective timeout for this job: ${timeout}ms (includes page navigation/waits)`
+    );
 
     // Set depth, pages and links based on mode
     let maxDepth, maxPages, followLinks;
@@ -150,82 +155,163 @@ export class ImprovedPlaywrightScraper {
     try {
       // Create browser if not already created
       if (!this.browser) {
+        const launchTimeout = timeout * 2; // Give browser launch double the page timeout
+        console.log(
+          `SCRAPER_INFO: Browser launch timeout set to: ${launchTimeout}ms`
+        );
+
         let launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
           headless: options.useHeadless ?? true,
-          timeout: timeout * 2, // Give browser launch more time than page navigation
+          timeout: launchTimeout,
         };
 
-        if (process.env.VERCEL === "1") {
+        // Use sparticuz/chromium in production environments
+        if (process.env.NODE_ENV === "production") {
           console.log(
-            "SCRAPER_DEBUG: Vercel env - preparing sparticuz launch options..."
+            "SCRAPER_DEBUG: Production env - preparing sparticuz launch options..."
           );
-          const executablePath = await chromium.executablePath();
+          let executablePath: string | null = null;
+          try {
+            console.log(
+              "SCRAPER_DEBUG: Attempting chromium.executablePath()..."
+            );
+            executablePath = await chromium.executablePath();
+            console.log(
+              `SCRAPER_DEBUG: chromium.executablePath() successful: ${
+                executablePath ? "Path found" : "Path NOT found"
+              }`
+            );
+          } catch (execPathError) {
+            console.error(
+              "SCRAPER_FATAL_ERROR: Failed during chromium.executablePath():",
+              execPathError
+            );
+            throw execPathError; // Re-throw to stop execution
+          }
+
           if (!executablePath) {
             throw new Error(
-              "Could not find Chromium executable via @sparticuz/chromium. Check Vercel deployment."
+              "SCRAPER_FATAL_ERROR: Could not find Chromium executable via @sparticuz/chromium."
             );
           }
           launchOptions = {
             args: chromium.args,
             executablePath: executablePath,
-            headless: true,
-            timeout: timeout * 2,
+            headless: true, // Force headless in production
+            timeout: launchTimeout, // Use the calculated launch timeout
           };
           console.log(
-            "SCRAPER_DEBUG: Vercel env - sparticuz launch options prepared."
+            "SCRAPER_DEBUG: Production env - sparticuz launch options prepared."
           );
         } else {
           console.log(
-            "SCRAPER_DEBUG: Local env - preparing default launch options..."
+            "SCRAPER_DEBUG: Local/Dev env - preparing default launch options..."
           );
         }
 
         console.log(
-          "SCRAPER_DEBUG: Launching browser with options:",
+          "SCRAPER_DEBUG: Attempting playwrightChromium.launch() with options:",
           JSON.stringify(launchOptions)
         );
 
         try {
           this.browser = await playwrightChromium.launch(launchOptions);
-          console.log("SCRAPER_DEBUG: Browser launched successfully.");
+          console.log(
+            "SCRAPER_DEBUG: playwrightChromium.launch() successful. Browser instance created."
+          );
         } catch (launchError) {
           console.error(
-            "SCRAPER_FATAL_ERROR: Failed to launch browser:",
+            `SCRAPER_FATAL_ERROR: Failed during playwrightChromium.launch() (attempt 1):`,
             launchError
           );
-          // Try one more time with different options
-          console.log(
-            "SCRAPER_DEBUG: Retrying browser launch with fallback options..."
-          );
-          launchOptions = {
-            ...launchOptions,
-            args: [
-              ...(launchOptions.args || []),
-              "--no-sandbox",
-              "--disable-setuid-sandbox",
-            ],
-          };
-          this.browser = await playwrightChromium.launch(launchOptions);
-          console.log(
-            "SCRAPER_DEBUG: Browser launched successfully with fallback options."
-          );
+          // Don't retry if using sparticuz failed, as args are likely optimal already.
+          // Retry only for local/dev environment if the first attempt failed without specific args.
+          if (process.env.NODE_ENV !== "production") {
+            console.log(
+              "SCRAPER_DEBUG: Retrying browser launch with fallback options (--no-sandbox)..."
+            );
+            const fallbackOptions = {
+              ...launchOptions, // Start with original options for local
+              args: [
+                ...(launchOptions.args || []),
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+              ],
+              timeout: launchTimeout, // Ensure timeout is applied to retry
+            };
+            console.log(
+              "SCRAPER_DEBUG: Attempting playwrightChromium.launch() with fallback options:",
+              JSON.stringify(fallbackOptions)
+            );
+            try {
+              this.browser = await playwrightChromium.launch(fallbackOptions);
+              console.log(
+                "SCRAPER_DEBUG: playwrightChromium.launch() successful with fallback options."
+              );
+            } catch (retryError) {
+              console.error(
+                `SCRAPER_FATAL_ERROR: Failed during playwrightChromium.launch() (attempt 2 with fallback):`,
+                retryError
+              );
+              throw retryError; // Re-throw the error after second failure
+            }
+          } else {
+            // If sparticuz failed, re-throw the original error, no retry needed.
+            throw launchError;
+          }
         }
-      }
+      } // end if (!this.browser)
 
       // Create context with default configuration
-      console.log("SCRAPER_DEBUG: Creating browser context...");
-      context = await this.browser.newContext({
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
-        viewport: { width: 1280, height: 800 },
-        javaScriptEnabled: true,
-      });
-      console.log("SCRAPER_DEBUG: Browser context created.");
+      console.log("SCRAPER_DEBUG: Attempting this.browser.newContext()...");
+      try {
+        context = await this.browser.newContext({
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
+          viewport: { width: 1280, height: 800 },
+          javaScriptEnabled: true,
+        });
+        console.log("SCRAPER_DEBUG: this.browser.newContext() successful.");
+      } catch (contextError) {
+        console.error(
+          "SCRAPER_FATAL_ERROR: Failed during this.browser.newContext():",
+          contextError
+        );
+        throw contextError; // Stop if context fails
+      }
 
       // Create a new page
-      console.log("SCRAPER_DEBUG: Creating new page...");
-      const page = await context.newPage();
-      console.log("SCRAPER_DEBUG: New page created.");
+      console.log("SCRAPER_DEBUG: Attempting context.newPage()...");
+      let page: Page | null = null;
+      try {
+        page = await context.newPage();
+        console.log("SCRAPER_DEBUG: context.newPage() successful.");
+      } catch (pageError) {
+        console.error(
+          "SCRAPER_FATAL_ERROR: Failed during context.newPage():",
+          pageError
+        );
+        // Try closing context gracefully before throwing
+        if (context) {
+          await context
+            .close()
+            .catch((e) =>
+              console.error(
+                "SCRAPER_ERROR: Error closing context after newPage failure:",
+                e
+              )
+            );
+        }
+        throw pageError; // Stop if page fails
+      }
+
+      // --- Added: Set default navigation timeout based on the effective timeout ---
+      page.setDefaultNavigationTimeout(timeout);
+      page.setDefaultTimeout(timeout);
+      console.log(
+        `SCRAPER_INFO: Page default navigation/action timeout set to: ${timeout}ms`
+      );
+      // --- End Add ---
 
       // Process URLs in queue (with page limit)
       while (pendingUrls.length > 0 && pagesVisited < maxPages) {
@@ -284,13 +370,14 @@ export class ImprovedPlaywrightScraper {
                 }/${maxRetries})...`
               );
 
-              // Increase timeout for each retry
-              const retryTimeout = timeout * (retryCount + 1);
-
+              // --- MODIFICATION: Use the effective 'timeout' for page.goto, not retryTimeout ---
+              // The retry logic handles increasing waits, but the individual goto attempt
+              // should respect the overall job timeout. The launch timeout is separate.
               await page.goto(currentUrl, {
                 waitUntil: "domcontentloaded",
-                timeout: retryTimeout,
+                timeout: timeout, // Use the job's effective timeout here
               });
+              // --- END MODIFICATION ---
               console.log(
                 `SCRAPER_DEBUG: page.goto successful for ${currentUrl}.`
               );
@@ -716,45 +803,75 @@ export class ImprovedPlaywrightScraper {
    */
   private async fastExtractEmails(
     url: string,
-    timeout: number
+    timeout: number // Fast extraction uses its own timeout logic, typically shorter
   ): Promise<ScrapedContact[]> {
     let browser: Browser | null = null;
     const contacts: ScrapedContact[] = [];
+    const launchTimeout = timeout * 2; // Give fast launch a bit more time too
 
     try {
-      console.log(`Executing fast extraction for: ${url}`);
+      console.log(
+        `Executing fast extraction for: ${url} with timeout ${timeout}ms, launch timeout ${launchTimeout}ms`
+      );
       let launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
-        headless: true, // Fast extraction likely always headless
+        headless: true,
+        timeout: launchTimeout, // Apply launch timeout
       };
 
-      if (process.env.VERCEL === "1") {
+      // Use sparticuz/chromium in production environments
+      if (process.env.NODE_ENV === "production") {
         console.log(
-          "Vercel environment detected. Launching Playwright Chromium with @sparticuz/chromium for fast extraction..."
+          "FastExtract: Production environment detected. Preparing sparticuz..."
         );
-        const executablePath = await chromium.executablePath();
+        let executablePath: string | null = null;
+        try {
+          console.log("FastExtract: Attempting chromium.executablePath()...");
+          executablePath = await chromium.executablePath();
+          console.log(
+            `FastExtract: chromium.executablePath() successful: ${
+              executablePath ? "Path found" : "Path NOT found"
+            }`
+          );
+        } catch (execPathError) {
+          console.error(
+            "FastExtract: SCRAPER_FATAL_ERROR: Failed during chromium.executablePath():",
+            execPathError
+          );
+          throw execPathError;
+        }
+
         if (!executablePath) {
           throw new Error(
-            "Could not find Chromium executable via @sparticuz/chromium. Check Vercel deployment."
+            "FastExtract: SCRAPER_FATAL_ERROR: Could not find Chromium executable via @sparticuz/chromium."
           );
         }
         launchOptions = {
           args: chromium.args,
           executablePath: executablePath,
-          headless: true, // Force headless on Vercel
+          headless: true, // Force headless
+          timeout: launchTimeout,
         };
       } else {
         console.log(
-          "Local environment detected. Launching Playwright Chromium with default settings for fast extraction..."
+          "FastExtract: Local environment detected. Using default launch options..."
         );
-        // No specific executablePath needed locally
       }
 
-      browser = await playwrightChromium.launch(launchOptions);
+      try {
+        console.log("FastExtract: Attempting playwrightChromium.launch()...");
+        browser = await playwrightChromium.launch(launchOptions);
+        console.log("FastExtract: playwrightChromium.launch() successful.");
+      } catch (launchError) {
+        console.error(
+          "FastExtract: SCRAPER_FATAL_ERROR: Failed to launch browser:",
+          launchError
+        );
+        return []; // Return empty contacts if browser fails
+      }
 
       const context = await browser.newContext({
-        javaScriptEnabled: false,
+        javaScriptEnabled: false, // Keep JS disabled for fast extract
       });
-
       // Disable resource loading for speed
       await context.route(
         "**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,otf}",
@@ -762,12 +879,9 @@ export class ImprovedPlaywrightScraper {
       );
 
       const page = await context.newPage();
-
-      // Set very short timeout
+      // Set specific timeouts for fast extract page actions
+      page.setDefaultNavigationTimeout(timeout);
       page.setDefaultTimeout(timeout);
-
-      // Navigate with minimal waiting
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout });
 
       // Use multiple extraction techniques for better results
 
@@ -985,23 +1099,23 @@ export class ImprovedPlaywrightScraper {
         // See if we can find any contact page links - expanded selectors
         const contactLinks = await page.$$(
           `a[href*="contact"], 
-          a[href*="kontakt"], 
-          a[href*="about-us"], 
-          a[href*="about"], 
-          a[href*="team"], 
-          a[href*="get-in-touch"], 
-          a[href*="connect"], 
-          a[href*="email"], 
-          a[href*="mail"], 
-          a[href*="join"],
-          a[href="/contact"], 
-          a[href="/about"], 
-          a[href="/contact-us"],
-          header a[href*="contact"], 
-          footer a[href*="contact"],
-          .menu a[href*="contact"], 
-          .navigation a[href*="contact"], 
-          .nav a[href*="contact"]`
+            a[href*="kontakt"], 
+            a[href*="about-us"], 
+            a[href*="about"], 
+            a[href*="team"], 
+            a[href*="get-in-touch"], 
+            a[href*="connect"], 
+            a[href*="email"], 
+            a[href*="mail"], 
+            a[href*="join"],
+            a[href="/contact"], 
+            a[href="/about"], 
+            a[href="/contact-us"],
+            header a[href*="contact"], 
+            footer a[href*="contact"],
+            .menu a[href*="contact"], 
+            .navigation a[href*="contact"], 
+            .nav a[href*="contact"]`
         );
 
         if (contactLinks.length > 0) {
@@ -1120,14 +1234,20 @@ export class ImprovedPlaywrightScraper {
           }
         }
       }
+    } catch (error) {
+      console.error("FastExtract: SCRAPER_ERROR: Unexpected error:", error);
+      return [];
     } finally {
       if (browser) {
-        await browser.close();
+        await browser
+          .close()
+          .catch((e) =>
+            console.error("FastExtract: Error closing browser:", e)
+          );
       }
     }
 
     console.log(`Fast extraction complete: found ${contacts.length} contacts`);
-    // Apply final filtering to remove any GPS coordinates that might have slipped through
     const filteredContacts = this.applyFinalFiltering(contacts);
     console.log(
       `After final filtering: returning ${filteredContacts.length} contacts`
