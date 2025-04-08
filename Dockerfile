@@ -6,7 +6,7 @@ FROM node:20-slim
 # 2. Set working directory
 WORKDIR /usr/src/app
 
-# 3. Install OS dependencies for Playwright/Chromium
+# 3. Install OS dependencies for Playwright/Chromium (Combined)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 \
     libnspr4 \
@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libasound2 \
     libxshmfence1 \
+    # Clean up in the same layer
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,11 +33,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY package*.json ./
 COPY tsconfig.worker.json ./
 
-# 5. Install dependencies
+# 5. Install dependencies (including @sparticuz/chromium)
 RUN npm ci
 
-# 6. Install Playwright browsers and dependencies
-RUN npx playwright install chromium --with-deps
+# 6. Install Playwright browsers and dependencies - REMOVED
+# REMOVED: RUN npx playwright install chromium --with-deps
+# Rely on @sparticuz/chromium provided via npm ci and OS deps from apt-get
 
 # 7. Copy source files needed for the worker
 COPY worker.ts ./
