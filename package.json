@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "build:worker": "tsc -p tsconfig.worker.json"
   },
   "dependencies": {
     "@sparticuz/chromium": "^133.0.0",
@@ -15,7 +16,9 @@
     "axios": "^1.8.3",
     "cheerio": "^1.0.0",
     "csv-stringify": "^6.5.2",
+    "dotenv": "^16.4.7",
     "exceljs": "^4.4.0",
+    "express": "^5.1.0",
     "next": "15.2.2",
     "playwright": "^1.51.1",
     "puppeteer": "^24.6.0",
@@ -27,7 +30,8 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/express": "^5.0.1",
+    "@types/node": "^20.17.30",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

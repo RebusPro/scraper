@@ -8,6 +8,7 @@ import {
   chromium as playwrightChromium,
   Browser,
   BrowserContext,
+  Page,
 } from "playwright";
 import { extractObfuscatedEmails } from "./enhancedEmailExtractor";
 import chromium from "@sparticuz/chromium";
@@ -510,11 +511,13 @@ export class ImprovedPlaywrightScraper {
             // Extract links that might lead to contact information
             const linksData = await page.evaluate(() => {
               return Array.from(document.querySelectorAll("a[href]")).map(
-                (a) => {
-                  const href = a.getAttribute("href");
+                (a: Element) => {
+                  // Add type Element
+                  const href = (a as HTMLAnchorElement).href;
+                  const text = (a as HTMLAnchorElement).textContent;
                   return {
                     href: href ? href.trim() : "",
-                    text: a.textContent ? a.textContent.trim() : "",
+                    text: text ? text.trim() : "",
                   };
                 }
               );
@@ -1115,5 +1118,255 @@ export class ImprovedPlaywrightScraper {
 
       return true;
     });
+  }
+
+  async _extractLinks(page: Page): Promise<string[]> {
+    console.log("SCRAPER_DEBUG: Extracting links from page...");
+    try {
+      const links = await page.evaluate(() => {
+        // Runs in browser context
+        const anchors = Array.from(document.querySelectorAll("a"));
+        return anchors
+          .map((link: Element) => (link as HTMLAnchorElement).href)
+          .filter((href: string | null) => href && href.startsWith("http")); // Add type check for href
+      });
+      console.log(`SCRAPER_DEBUG: Found ${links.length} links.`);
+      return links;
+    } catch (error) {
+      console.error("Error extracting links:", error);
+      return [];
+    }
+  }
+
+  async _extractEmails(page: Page): Promise<string[]> {
+    console.log("SCRAPER_DEBUG: Evaluating page for emails...");
+    const extractedEmails = await page.evaluate(() => {
+      // Runs in browser context
+      const emailRegex = new RegExp(
+        "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b",
+        "g"
+      );
+      const textContent = document.body.innerText || "";
+      const pageHTML = document.documentElement.outerHTML || "";
+      const emails = new Set<string>();
+
+      // 1. Find in plain text
+      const textMatches = textContent.match(emailRegex);
+      if (textMatches) {
+        textMatches.forEach((email) => emails.add(email.toLowerCase()));
+      }
+
+      // 2. Find in mailto links
+      document.querySelectorAll('a[href^="mailto:"]').forEach((el: Element) => {
+        // Add type Element
+        try {
+          const href = (el as HTMLAnchorElement).href; // Cast to access href
+          if (href) {
+            const mailtoParts = href.split(":");
+            if (mailtoParts.length > 1) {
+              const emailPart = mailtoParts[1].split("?")[0]; // Get part before query params
+              // Validate the extracted part as an email
+              if (emailPart && emailRegex.test(emailPart)) {
+                emails.add(emailPart.toLowerCase());
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(
+            "Could not parse mailto link:",
+            (el as HTMLAnchorElement).href,
+            e
+          );
+        }
+      });
+
+      // 3. Find in page HTML (handles some obfuscation)
+      // Example: email at domain dot com, email{at}domain(dot)com
+      const htmlEmailRegex =
+        /([a-zA-Z0-9._%+-]+)\s*(?:\(at\)|\{at\}| at |@)\s*([a-zA-Z0-9.-]+)\s*(?:\(dot\)|\{dot\}| dot |\.)\s*([a-zA-Z]{2,})/gi;
+      let match;
+      while ((match = htmlEmailRegex.exec(pageHTML)) !== null) {
+        const potentialEmail = `${match[1]}@${match[2]}.${match[3]}`;
+        if (emailRegex.test(potentialEmail)) {
+          emails.add(potentialEmail.toLowerCase());
+        }
+      }
+
+      // 4. Add more extraction methods if needed (e.g., looking in specific elements)
+
+      return Array.from(emails);
+    });
+    console.log(
+      `SCRAPER_DEBUG: Page evaluation found ${extractedEmails.length} unique emails.`
+    );
+    return extractedEmails;
+  }
+
+  // Basic Name Association (Example)
+  _findBestNameForEmail(
+    email: string,
+    potentialNames: string[],
+    textContent: string
+  ): string | null {
+    // Very basic: Look for names near the email address in the text
+    const emailIndex = textContent.indexOf(email);
+    if (emailIndex === -1) return null;
+
+    let bestName: string | null = null;
+    let minDistance = Infinity;
+
+    potentialNames.forEach((name) => {
+      let nameIndex = -1;
+      let currentSearchIndex = 0;
+      // Find closest occurrence of the name
+      while (
+        (nameIndex = textContent.indexOf(name, currentSearchIndex)) !== -1
+      ) {
+        const distance = Math.abs(emailIndex - nameIndex);
+        if (distance < minDistance && distance < 200) {
+          // Look within 200 chars
+          minDistance = distance;
+          bestName = name;
+        }
+        currentSearchIndex = nameIndex + 1; // Continue searching after this occurrence
+      }
+    });
+
+    return bestName;
+  }
+
+  // Improved URL filtering
+  _isValidUrl(url: string, domain: string): boolean {
+    try {
+      const parsedUrl = new URL(url);
+      // Allow same domain, known social media, and common contact/about pages
+      const allowedDomains = [
+        domain,
+        "linkedin.com",
+        "facebook.com",
+        "twitter.com",
+        "instagram.com",
+      ];
+      const allowedPaths = ["/contact", "/about", "/team", "/staff"];
+
+      const hostname = parsedUrl.hostname.replace(/^www\./, ""); // Normalize www
+
+      if (allowedDomains.some((d) => hostname.includes(d))) {
+        return true;
+      }
+      if (
+        hostname === domain &&
+        allowedPaths.some((p) => parsedUrl.pathname.toLowerCase().startsWith(p))
+      ) {
+        return true;
+      }
+
+      // Basic check for file extensions to avoid downloading files
+      const pathEnd = parsedUrl.pathname.split("/").pop() || "";
+      const disallowedExtensions = [".pdf", ".jpg", ".png", ".zip", ".docx"];
+      if (
+        disallowedExtensions.some((ext) => pathEnd.toLowerCase().endsWith(ext))
+      ) {
+        return false;
+      }
+
+      // Allow only http/https protocols
+      return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+    } catch /* (e) is defined but never used */ {
+      return false; // Invalid URL format
+    }
+  }
+
+  // Deduplicate and normalize emails
+  _normalizeAndDeduplicate(emails: string[]): string[] {
+    const uniqueEmails = new Set<string>();
+    emails.forEach((email: string) => {
+      // Add type string
+      // Simple normalization: lowercase
+      uniqueEmails.add(email.toLowerCase());
+    });
+    return Array.from(uniqueEmails);
+  }
+
+  // Helper to extract domain from URL
+  _getDomain(url: string): string | null {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch /* (e) is defined but never used */ {
+      return null;
+    }
+  }
+
+  // Improved logging function
+  _log(message: string, level: "INFO" | "DEBUG" | "WARN" | "ERROR" = "INFO") {
+    // Could expand this later to write to files, etc.
+    console.log(`SCRAPER_${level}: ${message}`);
+  }
+
+  // --- Helper Methods (Placeholder/Examples) ---
+
+  async _scrollToBottom(page: Page) {
+    await page.evaluate(async () => {
+      await new Promise<void>((resolve) => {
+        let totalHeight = 0;
+        const distance = 100;
+        const timer = setInterval(() => {
+          const scrollHeight = document.body.scrollHeight;
+          window.scrollBy(0, distance);
+          totalHeight += distance;
+
+          if (totalHeight >= scrollHeight - window.innerHeight) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, 100);
+      });
+    });
+  }
+
+  async _clickLoadMore(page: Page, selector: string) {
+    try {
+      const loadMoreButton = await page.$(selector);
+      if (loadMoreButton) {
+        await loadMoreButton.click();
+        await page.waitForTimeout(1000); // Wait for content to potentially load
+        return true;
+      }
+    } catch (error) {
+      console.warn(
+        `SCRAPER_WARN: Could not click load more button (${selector}):`,
+        error
+      );
+    }
+    return false;
+  }
+
+  // Helper function to extract unique emails from page content
+  _extractUniqueEmailsFromText(text: string): string[] {
+    const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+    const matches = text.match(emailRegex);
+    if (!matches) {
+      return [];
+    }
+    // Normalize to lowercase and deduplicate
+    return Array.from(
+      new Set(matches.map((email: string) => email.toLowerCase())) // Add type string
+    );
+  }
+
+  // Helper function to get unique links from a page
+  async _getUniqueLinks(page: Page): Promise<string[]> {
+    const links = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("a[href]")).map(
+        (link: Element) => (link as HTMLAnchorElement).href // Cast Element to HTMLAnchorElement
+      );
+    });
+    return Array.from(
+      new Set(
+        links.filter(
+          (link) => typeof link === "string" && link.startsWith("http")
+        )
+      )
+    ); // Add type check for link
   }
 }

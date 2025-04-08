@@ -24,21 +24,21 @@ export function extractCoachEmails(
     if (!isValidCoachEmail(email)) continue;
 
     // Try to extract name context
-    const name = findNameNearEmail(content, email) || undefined;
+    const name = findNameNearEmail(content, email);
 
     // Try to extract title context
-    const title = findTitleNearEmail(content, email) || undefined;
+    const title = findTitleNearEmail(content, email);
 
     // Extract phone if requested
-    let phone = undefined;
+    let phone: string | undefined = undefined;
     if (includePhoneNumbers) {
       phone = findPhoneNearEmail(content, email) || undefined;
     }
 
     contacts.push({
       email,
-      name,
-      title,
+      name: name || undefined,
+      title: title || undefined,
       phone,
       source: url,
       confidence: "Confirmed",
@@ -48,7 +48,7 @@ export function extractCoachEmails(
   // Specifically look for mailto links which often have higher quality data
   const mailtoEmails = extractMailtoEmails(content);
   for (const match of mailtoEmails) {
-    const { email, name } = match;
+    const { email, name: mailtoName } = match;
 
     // Skip if already found or invalid
     if (!isValidCoachEmail(email) || contacts.some((c) => c.email === email)) {
@@ -56,17 +56,17 @@ export function extractCoachEmails(
     }
 
     // Find more context
-    const title = findTitleNearEmail(content, email) || undefined;
+    const title = findTitleNearEmail(content, email);
 
-    let phone = undefined;
+    let phone: string | undefined = undefined;
     if (includePhoneNumbers) {
       phone = findPhoneNearEmail(content, email) || undefined;
     }
 
     contacts.push({
       email,
-      name: name || undefined,
-      title,
+      name: mailtoName || findNameNearEmail(content, email) || undefined,
+      title: title || undefined,
       phone,
       source: url,
       confidence: "Confirmed",

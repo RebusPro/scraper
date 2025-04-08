@@ -53,7 +53,7 @@ export function extractEmails(content: string): string[] {
   const standardMatches = normalizedContent.match(EMAIL_REGEX) || [];
 
   // Check for specific common organizational emails that should be prioritized
-  const orgEmails = [];
+  const orgEmails: string[] = [];
   const infoEmailMatch =
     normalizedContent.match(/info@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+/g) || [];
   const contactEmailMatch =
