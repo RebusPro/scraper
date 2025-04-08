@@ -51,6 +51,10 @@ async function runScrapingJob(jobPayload: JobPayload) {
   let status: "success" | "error" = "success";
   let scraper: ImprovedPlaywrightScraper | null = null;
 
+  console.log(
+    `BACKGROUND_DEBUG: Entered runScrapingJob for ${url}, Batch: ${batchId}`
+  );
+
   try {
     console.log(
       `BACKGROUND: Processing job for URL: ${url}, Batch ID: ${batchId}`
@@ -64,7 +68,9 @@ async function runScrapingJob(jobPayload: JobPayload) {
           settings
         )}`
       );
+      console.log(`BACKGROUND_DEBUG: Calling scraper.scrapeWebsite...`);
       scrapeResult = await scraper.scrapeWebsite(url, settings);
+      console.log(`BACKGROUND_DEBUG: scraper.scrapeWebsite finished.`);
       console.log(
         `BACKGROUND: Scraping finished for ${url}. Found ${
           scrapeResult?.length ?? 0
@@ -72,7 +78,7 @@ async function runScrapingJob(jobPayload: JobPayload) {
       );
     } catch (scrapeError: unknown) {
       console.error(
-        `BACKGROUND: Error scraping ${url} for batch ${batchId}:`,
+        `BACKGROUND_ERROR: Error during scraper.scrapeWebsite for ${url}:`,
         scrapeError
       );
       errorMessage =
@@ -94,8 +100,8 @@ async function runScrapingJob(jobPayload: JobPayload) {
         .insert([
           {
             batch_id: batchId,
-            url,
-            status,
+            url: url,
+            status: status,
             contacts: scrapeResult ? JSON.stringify(scrapeResult) : null,
             error_message: errorMessage,
           },
@@ -103,7 +109,7 @@ async function runScrapingJob(jobPayload: JobPayload) {
         .select();
 
       if (dbError) {
-        throw dbError;
+        throw dbError; // Throw to be caught by the outer catch block
       }
       console.log(
         `BACKGROUND: Successfully saved result for ${url} (Batch ID: ${batchId})`,
@@ -111,25 +117,28 @@ async function runScrapingJob(jobPayload: JobPayload) {
       );
     } catch (dbError: unknown) {
       console.error(
-        `BACKGROUND: DATABASE ERROR saving result for ${url} (Batch ID: ${batchId}):`,
+        `BACKGROUND_ERROR: DATABASE ERROR saving result for ${url} (Batch ID: ${batchId}):`,
         dbError
       );
       // Log DB error - the job is already considered successful by QStash
+      // We might want to update the status in a separate step if critical
     }
     // --- End Database Logic ---
+    console.log(`BACKGROUND_DEBUG: Reached end of try block for ${url}.`);
   } catch (jobProcessingError: unknown) {
     console.error(
-      "BACKGROUND: Unhandled error during job processing:",
+      "BACKGROUND_ERROR: Unhandled error during job processing:",
       jobProcessingError
     );
     // Log unhandled errors - QStash won't retry based on this
   } finally {
+    console.log(`BACKGROUND_DEBUG: Entering finally block for ${url}.`);
     // Ensure the browser instance is closed
     if (scraper) {
       console.log(`BACKGROUND: Closing browser instance for ${url}`);
       await scraper.close().catch((closeErr: Error) => {
         console.error(
-          `BACKGROUND: Error closing scraper for ${url}:`,
+          `BACKGROUND_ERROR: Error closing scraper for ${url}:`,
           closeErr
         );
       });
