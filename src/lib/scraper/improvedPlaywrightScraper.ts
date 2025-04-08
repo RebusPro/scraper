@@ -367,17 +367,13 @@ export class ImprovedPlaywrightScraper {
               console.log(
                 `SCRAPER_DEBUG: Attempting page.goto for ${currentUrl} (attempt ${
                   retryCount + 1
-                }/${maxRetries})...`
+                }/${maxRetries}) with timeout ${timeout}ms...`
               );
 
-              // --- MODIFICATION: Use the effective 'timeout' for page.goto, not retryTimeout ---
-              // The retry logic handles increasing waits, but the individual goto attempt
-              // should respect the overall job timeout. The launch timeout is separate.
               await page.goto(currentUrl, {
                 waitUntil: "domcontentloaded",
-                timeout: timeout, // Use the job's effective timeout here
+                timeout: timeout,
               });
-              // --- END MODIFICATION ---
               console.log(
                 `SCRAPER_DEBUG: page.goto successful for ${currentUrl}.`
               );
@@ -385,7 +381,7 @@ export class ImprovedPlaywrightScraper {
               // Wait for content to load with increased timeout
               console.log(`SCRAPER_DEBUG: Waiting for network idle...`);
               await page
-                .waitForLoadState("networkidle", { timeout: 10000 })
+                .waitForLoadState("networkidle", { timeout: timeout })
                 .catch(() => {
                   console.log(
                     `SCRAPER_DEBUG: Network idle wait timed out or failed for ${currentUrl} (continuing anyway)`
@@ -527,7 +523,7 @@ export class ImprovedPlaywrightScraper {
                     // For normal URLs, visit the contact page
                     await page.goto(absoluteUrl, {
                       waitUntil: "domcontentloaded",
-                      timeout: 10000,
+                      timeout: timeout, // Use the job's effective timeout
                     });
 
                     // Wait a bit longer for contact pages to load
@@ -589,7 +585,7 @@ export class ImprovedPlaywrightScraper {
                     // Return to original page
                     await page.goto(currentUrl, {
                       waitUntil: "domcontentloaded",
-                      timeout: 10000,
+                      timeout: timeout, // Use the job's effective timeout
                     });
                   } catch (error) {
                     console.error(
