@@ -46,7 +46,7 @@ export default function Home() {
     followLinks: true,
     includePhoneNumbers: true,
     browserType: "chromium" as "chromium" | "firefox",
-    timeout: 30000,
+    timeout: 90000,
   });
   const [showFeatureInfo, setShowFeatureInfo] = useState(false);
 
