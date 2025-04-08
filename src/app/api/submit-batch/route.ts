@@ -32,7 +32,9 @@ const qstashClient = new Client({
 });
 
 const productionUrl = "https://scraper-five-xi.vercel.app/api/process-job";
-const localUrl = "http://localhost:3000/api/process-job"; // Adjust port if needed
+// const localUrl = "http://localhost:3000/api/process-job"; // Adjust port if needed
+const localUrl =
+  "https://excited-ghastly-alpaca.ngrok-free.app/api/process-job";
 
 // Use the production URL ONLY when NODE_ENV is 'production', otherwise use localhost
 const WORKER_URL =

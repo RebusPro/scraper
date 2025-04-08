@@ -1,0 +1,31 @@
+// tsconfig.worker.json
+{
+  "compilerOptions": {
+    "target": "ES2020", // Target modern Node.js versions
+    "module": "CommonJS", // Standard module system for Node.js
+    "outDir": "./dist", // Output directory for compiled JS
+    "rootDir": "./", // Root directory of source files (adjust if needed)
+    "strict": true, // Enable strict type checking
+    "esModuleInterop": true, // Allows 'import express from "express"' syntax
+    "skipLibCheck": true, // Skip type checking of declaration files
+    "forceConsistentCasingInFileNames": true, // Prevent case sensitivity issues
+    "moduleResolution": "node", // How modules are resolved
+    "sourceMap": true, // Generate source maps for debugging (optional)
+    "lib": ["ES2020", "DOM", "DOM.Iterable"], // Include necessary ES2020 libraries for Node.js
+    "noImplicitAny": false,
+    "noEmitOnError": false
+    // Remove "noEmit", "jsx", "plugins", "paths" as they are not needed or different here
+  },
+  "include": [
+    "worker.ts", // Compile the worker file
+    "src/lib/**/*.ts" // Include the scraper library and its types
+    // Add other specific paths if worker.ts depends on more code outside src/lib
+  ],
+  "exclude": [
+    "node_modules", // Standard exclusion
+    "src/app", // Exclude Next.js app directory
+    "src/components", // Exclude Next.js components
+    // Add other Next.js specific folders if necessary
+    "dist" // Exclude the output directory
+  ]
+}
