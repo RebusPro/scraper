@@ -179,9 +179,20 @@ export class ImprovedPlaywrightScraper {
           // No specific executablePath needed locally
         }
 
-        console.log("SCRAPER_DEBUG: Launching browser...");
-        this.browser = await playwrightChromium.launch(launchOptions);
-        console.log("SCRAPER_DEBUG: Browser launched successfully.");
+        console.log(
+          "SCRAPER_DEBUG: Launching browser with options:",
+          JSON.stringify(launchOptions)
+        ); // Log options
+        try {
+          this.browser = await playwrightChromium.launch(launchOptions);
+          console.log("SCRAPER_DEBUG: Browser launched successfully.");
+        } catch (launchError) {
+          console.error(
+            "SCRAPER_FATAL_ERROR: Failed to launch browser:",
+            launchError
+          );
+          throw launchError; // Re-throw the error to be caught by the outer handler
+        }
       }
 
       // Create context with default configuration
