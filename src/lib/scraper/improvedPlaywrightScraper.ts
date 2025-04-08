@@ -154,29 +154,34 @@ export class ImprovedPlaywrightScraper {
           headless: options.useHeadless ?? true, // Respect option locally, default true
         };
 
-        if (process.env.VERCEL === "1") {
+        // Check if running on Vercel OR Google Cloud Run
+        const isServerless =
+          process.env.VERCEL === "1" || process.env.K_SERVICE;
+
+        if (isServerless) {
           console.log(
-            "SCRAPER_DEBUG: Vercel env - preparing sparticuz launch options..."
+            "SCRAPER_DEBUG: Serverless environment (Vercel or Cloud Run) detected. Preparing sparticuz launch options..."
           );
           const executablePath = await chromium.executablePath();
           if (!executablePath) {
             throw new Error(
-              "Could not find Chromium executable via @sparticuz/chromium. Check Vercel deployment."
+              "Could not find Chromium executable via @sparticuz/chromium. Check deployment."
             );
           }
+          // Use sparticuz chromium options in serverless environments
           launchOptions = {
             args: chromium.args,
             executablePath: executablePath,
-            headless: true, // Force headless on Vercel
+            headless: true, // Force headless in serverless
           };
           console.log(
-            "SCRAPER_DEBUG: Vercel env - sparticuz launch options prepared."
+            "SCRAPER_DEBUG: Serverless env - sparticuz launch options prepared."
           );
         } else {
           console.log(
             "SCRAPER_DEBUG: Local env - preparing default launch options..."
           );
-          // No specific executablePath needed locally
+          // No specific executablePath needed locally for default playwright install
         }
 
         console.log(
