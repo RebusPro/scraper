@@ -60,3 +60,7 @@ For technical users, this version includes:
 - Integration with specialized coach directory processing
 - More reliable name and title extraction
 - Robustness against network errors and timeouts
+
+docker run -p 3001:3001 -e NODE_ENV=development -e QSTASH_CURRENT_SIGNING_KEY=sig_5XXoyZvCVHrtpy2CwmVNZL9yGxFz -e QSTASH_NEXT_SIGNING_KEY=sig_5jiYJKR9GUCTStChqaJTnKS3BWn5 -e SUPABASE_URL=https://hwhimlpnbarjkrivywsx.supabase.co -e SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGltbHBuYmFyamtyaXZ5d3N4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDAzNzk0MiwiZXhwIjoyMDU5NjEzOTQyfQ.Y17a6M4wMS_nVqsg7yOiY17Tua3rEpgdMsg7aJbJhn4 -e PORT=3001 scraper-worker:local
+
+gcloud run deploy scraper-worker --image us-central1-docker.pkg.dev/prune-94ad9/scraper-repo/scraper-worker:latest --platform managed --region us-central1 --allow-unauthenticated --port 3001 --memory 1Gi --cpu 1 --set-env-vars="NODE_ENV=production,QSTASH_CURRENT_SIGNING_KEY=sig_5XXoyZvCVHrtpy2CwmVNZL9yGxFz,QSTASH_NEXT_SIGNING_KEY=sig_5jiYJKR9GUCTStChqaJTnKS3BWn5,SUPABASE_URL=https://hwhimlpnbarjkrivywsx.supabase.co,SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3aGltbHBuYmFyamtyaXZ5d3N4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDAzNzk0MiwiZXhwIjoyMDU5NjEzOTQyfQ.Y17a6M4wMS_nVqsg7yOiY17Tua3rEpgdMsg7aJbJhn4" --project=prune-94ad9
