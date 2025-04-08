@@ -3,7 +3,10 @@
  */
 import axios from "axios";
 import * as cheerio from "cheerio";
-import puppeteerCore, { Protocol } from "puppeteer-core"; // For Vercel + Protocol type
+import puppeteerCore, {
+  Protocol,
+  HTTPResponse as PuppeteerHTTPResponse,
+} from "puppeteer-core"; // For Vercel + Protocol type
 import puppeteerFull from "puppeteer"; // For Local development
 import { extractEmails, processContactData } from "./emailExtractor";
 import { extractDataFromJson } from "./jsonExtractor";
@@ -358,58 +361,57 @@ export class WebScraper {
       // Enable network monitoring
       await client.send("Network.enable");
 
-      // Store captured network data
+      // Store potential API requests (ID, URL, MIME type) identified during loading
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const potentialApiRequests: {
+        requestId: string;
+        url: string;
+        mimeType: string;
+      }[] = [];
+      // Store captured network data (only added after successfully getting body later)
       const networkResponseData: ApiResponse[] = [];
 
-      // Listen for API response data with proper event
+      // Listen for API response data - JUST identify potential requests here
       client.on(
         "Network.responseReceived",
-        async (event: Protocol.Network.ResponseReceivedEvent) => {
-          try {
-            const response = event.response;
-            const url = response.url;
+        (event: Protocol.Network.ResponseReceivedEvent) => {
+          const response = event.response;
+          const url = response.url;
+          const mimeType = response.mimeType || "";
 
-            // Look for API endpoints by common patterns
-            // This generic approach works for many sites that load data dynamically
-            if (
-              // Common API URL patterns
-              url.includes("/api/") ||
-              url.includes("/data/") ||
-              url.includes("/search") ||
-              url.includes("/find") ||
-              url.includes("json") ||
-              url.includes("list") ||
-              // Content types that likely contain data
-              response.mimeType.includes("json") ||
-              response.mimeType.includes("application/javascript") ||
-              // Any URL parameter that suggests data
-              url.includes("query=") ||
-              url.includes("q=") ||
-              url.includes("filter=") ||
-              url.includes("id=")
-            ) {
-              console.log(`Found potential API endpoint: ${url}`);
+          // <<< NEW: Log ALL received responses for debugging >>>
+          console.log(
+            `--- Network Response Received: URL=${url}, MIME=${mimeType}`
+          );
 
-              // Get the response body
-              const responseBody = await client.send(
-                "Network.getResponseBody",
-                {
-                  requestId: event.requestId,
-                }
-              );
-
-              // Store the response for later processing
-              if (responseBody && responseBody.body) {
-                networkResponseData.push({
-                  url,
-                  content: responseBody.body,
-                  contentType: response.mimeType || "",
-                });
-                console.log(`Captured API data from: ${url}`);
-              }
-            }
-          } catch (error) {
-            console.warn("Error intercepting network response:", error);
+          // Look for API endpoints by common patterns
+          if (
+            // <<< NEW: Explicit check for the target URL >>>
+            url.includes("/umbraco/surface/Map/GetPointsFromSearch") ||
+            // Existing checks
+            url.includes("/api/") ||
+            url.includes("/data/") ||
+            url.includes("/search") ||
+            url.includes("/find") ||
+            url.includes("json") || // Check if URL itself contains json
+            url.includes("list") ||
+            mimeType.includes("json") || // Check MIME type for json
+            mimeType.includes("application/javascript") || // Sometimes JSON is served as JS
+            url.includes("query=") ||
+            url.includes("q=") ||
+            url.includes("filter=") ||
+            url.includes("id=")
+          ) {
+            // Store request info to fetch body later
+            potentialApiRequests.push({
+              requestId: event.requestId,
+              url: url,
+              mimeType: mimeType,
+            });
+            // Log identification immediately
+            console.log(
+              `>>> Identified potential API request (ID: ${event.requestId}): ${url}`
+            ); // Added Request ID here
           }
         }
       );
@@ -515,22 +517,74 @@ export class WebScraper {
             await page.waitForSelector(formInteraction.submitButtonSelector, {
               timeout: 5000,
             });
-            await page.click(formInteraction.submitButtonSelector);
 
-            // Wait for results to load
-            if (formInteraction.waitForSelector) {
-              // Wait for a specific element to appear
-              await page.waitForSelector(formInteraction.waitForSelector, {
-                timeout: this.options.timeout || 30000,
+            // --- MODIFICATION START: Use waitForResponse ---
+            // Prepare to wait for the specific API response *before* clicking
+            const apiResponsePromise = page.waitForResponse(
+              (response: PuppeteerHTTPResponse) =>
+                response
+                  .url()
+                  .includes("/umbraco/surface/Map/GetPointsFromSearch") &&
+                response.status() === 200,
+              { timeout: 15000 } // Wait up to 15 seconds for the API response
+            );
+
+            // Click the submit button
+            await page.click(formInteraction.submitButtonSelector);
+            console.log(
+              "Form submitted. Waiting for GetPointsFromSearch API response..."
+            );
+
+            try {
+              // Wait for the specific API response
+              const apiResponse = await apiResponsePromise;
+              console.log(
+                `Successfully intercepted GetPointsFromSearch response: ${apiResponse.url()}`
+              );
+
+              // Attempt to get the JSON body directly
+              const responseBodyText = await apiResponse.text(); // Get as text first for logging
+              console.log(
+                `>>> Raw content for GetPointsFromSearch:`,
+                responseBodyText.substring(0, 500) + "..."
+              );
+
+              // Add it to our data array for later processing
+              // Note: We get the body here, so no need to fetch it again later
+              networkResponseData.push({
+                url: apiResponse.url(),
+                content: responseBodyText, // Store the text content
+                contentType:
+                  apiResponse.headers()["content-type"] || "application/json", // Get content type from headers
               });
-            } else {
-              // Default wait time after submission
-              await new Promise((resolve) =>
-                setTimeout(resolve, formInteraction.waitTime || 2000)
+              console.log(
+                "GetPointsFromSearch response added to networkResponseData."
+              );
+            } catch (error) {
+              console.warn(
+                `Did not receive expected GetPointsFromSearch API response within timeout or encountered error:`,
+                error instanceof Error ? error.message : String(error)
               );
             }
+            // --- MODIFICATION END ---
 
-            console.log("Form submitted and waited for results");
+            // Original wait logic (can potentially be removed or reduced if waitForResponse is reliable)
+            // We might still need a short wait for other page elements if needed
+            if (formInteraction.waitForSelector) {
+              try {
+                await page.waitForSelector(formInteraction.waitForSelector, {
+                  timeout: 5000, // Reduced timeout as main data is captured
+                });
+              } catch {
+                console.warn(
+                  `Optional waitForSelector ${formInteraction.waitForSelector} not found after form submit.`
+                );
+              }
+            } else {
+              await new Promise((resolve) => setTimeout(resolve, 1000)); // Short wait
+            }
+
+            console.log("Finished waiting after form submission.");
           }
         } catch (error) {
           console.warn("Form interaction failed:", error);
@@ -546,7 +600,44 @@ export class WebScraper {
       // Use setTimeout with promise instead of waitForTimeout
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // Get the page content
+      // --- REMOVED/SIMPLIFIED: Fetch bodies for identified API requests AFTER page load/interactions ---
+      // We no longer need the generic loop to fetch bodies for *all* requests,
+      // as the critical one is captured by waitForResponse.
+      // We *could* still fetch others if needed for context, but let's remove it for now to simplify.
+      console.log(
+        `Fetching of other potential API bodies skipped (target captured via waitForResponse).`
+      );
+      /* // Keep the identification listener active, but remove the body fetching loop
+      console.log(
+        `Attempting to fetch bodies for ${potentialApiRequests.length} identified potential API requests...`
+      );
+      for (const req of potentialApiRequests) {
+        // Skip the one we already captured
+        if (req.url.includes("/umbraco/surface/Map/GetPointsFromSearch")) continue;
+        try {
+          const responseBody = await client.send("Network.getResponseBody", {
+            requestId: req.requestId,
+          });
+
+          if (responseBody && responseBody.body) {
+            networkResponseData.push({
+              url: req.url,
+              content: responseBody.body,
+              contentType: req.mimeType,
+            });
+            console.log(`Successfully captured OTHER API body from: ${req.url}`);
+          } else {
+             console.warn(`Got empty body for OTHER potential API: ${req.url} (Request ID: ${req.requestId})`);
+          }
+        } catch (error) {
+           const errorMessage = error instanceof Error ? error.message.split('\\n')[0] : String(error);
+           console.warn(`Failed to get response body for OTHER potential API ${req.url} (Request ID: ${req.requestId}): ${errorMessage}`);
+        }
+      }
+      */
+      // --------------------------------------------------------------------------
+
+      // Get the page content (still potentially useful for context)
       const content = await page.content();
 
       // Extract emails from the rendered content
@@ -555,35 +646,65 @@ export class WebScraper {
       // Also extract emails from API responses
       let apiContent = "";
       console.log(
-        `Processing ${networkResponseData.length} captured API responses`
+        `Processing ${networkResponseData.length} captured API responses with bodies`
       );
 
       for (const response of networkResponseData) {
         try {
-          console.log(`Processing response from: ${response.url}`);
+          console.log(`>>> Processing response from: ${response.url}`);
 
           // Only attempt to parse if content type suggests JSON
           if (
             response.contentType &&
             (response.contentType.includes("application/json") ||
-              response.contentType.includes("text/javascript")) // Sometimes JSON is served as JS
+              response.contentType.includes("text/javascript"))
           ) {
+            console.log(`>>> Attempting to parse JSON for: ${response.url}`);
+            // Log the raw content before parsing (might be long)
+            // Limit log to prevent excessive output
+            const rawContentSnippet =
+              response.content.substring(0, 500) +
+              (response.content.length > 500 ? "..." : "");
+            console.log(
+              `>>> Raw content for ${response.url}:`,
+              rawContentSnippet
+            );
+
             try {
-              // Try parsing as JSON, handling any potential format
               const jsonData = JSON.parse(response.content);
-              console.log("API response parsed successfully as JSON");
+              console.log(`>>> Successfully parsed JSON for: ${response.url}`);
 
-              // For debugging
+              // Log the structure of the parsed JSON
               console.log(
-                "API response contains:",
-                Object.keys(jsonData).join(", ")
+                `>>> Parsed JSON keys for ${response.url}:`,
+                Object.keys(jsonData)
               );
+              // Specifically check if 'programs' exists and is an array
+              const hasPrograms =
+                jsonData.hasOwnProperty("programs") &&
+                Array.isArray(jsonData.programs);
+              console.log(
+                `>>> Does parsed JSON have 'programs' array property for ${response.url}?`,
+                hasPrograms
+              );
+              if (hasPrograms) {
+                console.log(
+                  `>>> Number of programs found in JSON for ${response.url}:`,
+                  jsonData.programs.length
+                );
+              }
 
-              // Enhanced generic processing of API responses to handle any JSON structure
-              console.log("Processing API response using universal extractor");
+              // Enhanced generic processing (assuming extractDataFromJson exists and is imported)
+              console.log(
+                ">>> Processing API response using universal extractor"
+              );
+              const extractedData = extractDataFromJson(jsonData); // Ensure this function exists and works as expected
 
-              // Use our new method to extract data from any JSON structure
-              const extractedData = extractDataFromJson(jsonData);
+              console.log(`>>> Extracted data from JSON for ${response.url}:`, {
+                emails: extractedData.emails.length,
+                phones: extractedData.phoneNumbers.length,
+                contextChars: extractedData.contextText.length,
+              });
 
               // Add any found emails to our collection
               if (extractedData.emails.length > 0) {
@@ -612,20 +733,20 @@ export class WebScraper {
             } catch (parseError) {
               // Log if parsing fails even if content type looked like JSON
               console.warn(
-                `Failed to parse response from ${response.url} as JSON, even though content type was ${response.contentType}:`,
+                `>>> Failed to parse JSON response from ${response.url} (Content-Type: ${response.contentType}):`,
                 parseError
               );
             }
           } else {
             // Log skipping responses that are not JSON
             console.log(
-              `Skipping non-JSON response from ${response.url} (Content-Type: ${response.contentType})`
+              `>>> Skipping non-JSON response from ${response.url} (Content-Type: ${response.contentType})`
             );
           }
         } catch (outerError) {
           // Catch any unexpected errors during the processing of a single response
           console.error(
-            `Unexpected error processing response from ${response.url}:`,
+            `>>> Unexpected error processing response from ${response.url}:`,
             outerError
           );
         }
