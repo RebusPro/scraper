@@ -31,13 +31,14 @@ const qstashClient = new Client({
   token: process.env.QSTASH_TOKEN,
 });
 
-const productionUrl =
-  "https://scraper-worker-964726998539.us-central1.run.app/api/process-job";
+// <<< UPDATED PRODUCTION URL >>>
+const productionUrl = "http://143.198.109.247:3001/api/process-job";
+
 // const localUrl = "http://localhost:3000/api/process-job"; // Adjust port if needed
 const localUrl =
-  "https://excited-ghastly-alpaca.ngrok-free.app/api/process-job";
+  "https://excited-ghastly-alpaca.ngrok-free.app/api/process-job"; // Keep ngrok for local testing if needed
 
-// Use the production URL ONLY when NODE_ENV is 'production', otherwise use localhost
+// Use the production URL ONLY when NODE_ENV is 'production', otherwise use localhost/ngrok
 const WORKER_URL =
   process.env.NODE_ENV === "production" ? productionUrl : localUrl;
 
