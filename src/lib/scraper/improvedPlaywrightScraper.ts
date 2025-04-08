@@ -109,18 +109,18 @@ export class ImprovedPlaywrightScraper {
   ): Promise<ScrapedContact[]> {
     // Set defaults
     const mode = options.mode ?? "standard";
-    const timeout = options.timeout ?? 30000; // Default timeout
+    const timeout = options.timeout ?? 60000; // Increased default timeout from 30000 to 60000
 
     // Set depth, pages and links based on mode
     let maxDepth, maxPages, followLinks;
 
     if (mode === "aggressive") {
       maxDepth = options.maxDepth ?? 3;
-      maxPages = options.maxPages ?? 20; // Aggressive page limit
+      maxPages = options.maxPages ?? 20;
       followLinks = options.followLinks ?? true;
     } else if (mode === "standard") {
       maxDepth = options.maxDepth ?? 2;
-      maxPages = options.maxPages ?? 10; // Changed standard limit from 5 to 10
+      maxPages = options.maxPages ?? 10;
       followLinks = options.followLinks ?? true;
     } else {
       // Gentle mode
@@ -136,23 +136,23 @@ export class ImprovedPlaywrightScraper {
     }
 
     console.log(
-      `Using standard extraction with maxDepth=${maxDepth}, maxPages=${maxPages}`
+      `Using standard extraction with maxDepth=${maxDepth}, maxPages=${maxPages}, timeout=${timeout}ms`
     );
 
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
-    // Ensure pendingUrls type includes priority
     const pendingUrls: { url: string; depth: number; priority: number }[] = [
-      { url, depth: 0, priority: PRIORITY.INITIAL }, // Start URL has highest priority
+      { url, depth: 0, priority: PRIORITY.INITIAL },
     ];
     let pagesVisited = 0;
-    let context: BrowserContext | null = null; // Use BrowserContext type
+    let context: BrowserContext | null = null;
 
     try {
       // Create browser if not already created
       if (!this.browser) {
         let launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
-          headless: options.useHeadless ?? true, // Respect option locally, default true
+          headless: options.useHeadless ?? true,
+          timeout: timeout * 2, // Give browser launch more time than page navigation
         };
 
         if (process.env.VERCEL === "1") {
@@ -168,7 +168,8 @@ export class ImprovedPlaywrightScraper {
           launchOptions = {
             args: chromium.args,
             executablePath: executablePath,
-            headless: true, // Force headless on Vercel
+            headless: true,
+            timeout: timeout * 2,
           };
           console.log(
             "SCRAPER_DEBUG: Vercel env - sparticuz launch options prepared."
@@ -177,13 +178,13 @@ export class ImprovedPlaywrightScraper {
           console.log(
             "SCRAPER_DEBUG: Local env - preparing default launch options..."
           );
-          // No specific executablePath needed locally
         }
 
         console.log(
           "SCRAPER_DEBUG: Launching browser with options:",
           JSON.stringify(launchOptions)
-        ); // Log options
+        );
+
         try {
           this.browser = await playwrightChromium.launch(launchOptions);
           console.log("SCRAPER_DEBUG: Browser launched successfully.");
@@ -192,7 +193,22 @@ export class ImprovedPlaywrightScraper {
             "SCRAPER_FATAL_ERROR: Failed to launch browser:",
             launchError
           );
-          throw launchError; // Re-throw the error to be caught by the outer handler
+          // Try one more time with different options
+          console.log(
+            "SCRAPER_DEBUG: Retrying browser launch with fallback options..."
+          );
+          launchOptions = {
+            ...launchOptions,
+            args: [
+              ...(launchOptions.args || []),
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+            ],
+          };
+          this.browser = await playwrightChromium.launch(launchOptions);
+          console.log(
+            "SCRAPER_DEBUG: Browser launched successfully with fallback options."
+          );
         }
       }
 
@@ -255,27 +271,34 @@ export class ImprovedPlaywrightScraper {
 
         try {
           // Navigate to the page with retry logic
-          const maxRetries = 2;
+          const maxRetries = 3; // Increased from 2 to 3
           let retryCount = 0;
           let success = false;
+          let lastError: Error | null = null;
 
           while (!success && retryCount < maxRetries) {
             try {
               console.log(
-                `SCRAPER_DEBUG: Attempting page.goto for ${currentUrl}...`
+                `SCRAPER_DEBUG: Attempting page.goto for ${currentUrl} (attempt ${
+                  retryCount + 1
+                }/${maxRetries})...`
               );
+
+              // Increase timeout for each retry
+              const retryTimeout = timeout * (retryCount + 1);
+
               await page.goto(currentUrl, {
                 waitUntil: "domcontentloaded",
-                timeout: timeout,
+                timeout: retryTimeout,
               });
               console.log(
                 `SCRAPER_DEBUG: page.goto successful for ${currentUrl}.`
               );
 
-              // Wait for content to load with reduced timeout
+              // Wait for content to load with increased timeout
               console.log(`SCRAPER_DEBUG: Waiting for network idle...`);
               await page
-                .waitForLoadState("networkidle", { timeout: 5000 })
+                .waitForLoadState("networkidle", { timeout: 10000 })
                 .catch(() => {
                   console.log(
                     `SCRAPER_DEBUG: Network idle wait timed out or failed for ${currentUrl} (continuing anyway)`
@@ -284,16 +307,32 @@ export class ImprovedPlaywrightScraper {
               console.log(`SCRAPER_DEBUG: Network idle wait finished.`);
               success = true;
             } catch (error) {
+              lastError = error as Error;
               console.log(
                 `Retry ${retryCount + 1} for ${currentUrl}: ${error}`
               );
               retryCount++;
+
               if (retryCount >= maxRetries) {
-                throw error;
+                console.error(
+                  `SCRAPER_ERROR: All retry attempts failed for ${currentUrl}. Last error: ${lastError}`
+                );
+                // Instead of throwing, we'll continue to the next URL
+                break;
               }
-              // Wait between retries
-              await new Promise((resolve) => setTimeout(resolve, 2000));
+
+              // Exponential backoff: wait longer between each retry
+              const backoffTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
+              console.log(`Waiting ${backoffTime}ms before retry...`);
+              await new Promise((resolve) => setTimeout(resolve, backoffTime));
             }
+          }
+
+          if (!success) {
+            console.log(
+              `SCRAPER_WARN: Skipping ${currentUrl} after ${maxRetries} failed attempts`
+            );
+            continue; // Skip to next URL
           }
 
           // Check for obvious contact links if we're on the main page
