@@ -149,7 +149,7 @@ export class ImprovedPlaywrightScraper {
     // <<< ADDED: Overall Job Timeout Logic >>>
     const jobStartTime = Date.now();
     // Use worker timeout if passed, default to slightly less than common queue message visibility timeouts (e.g., 5 mins)
-    const jobTimeout = options.timeout ?? 300000; // Default 5 minutes (300,000 ms)
+    const jobTimeout = options.timeout ?? 600000; // Default 5 minutes (300,000 ms)
     console.log(
       `WORKER_BACKGROUND: Overall job timeout set to ${
         jobTimeout / 1000
