@@ -330,7 +330,7 @@ export default function HistoryPage() {
 
     try {
       // Fetch all contacts from selected batches
-      const allContacts: ScrapedContact[] = [];
+      const allContacts: Array<ScrapedContact & { timestamp?: string }> = [];
 
       for (const batchId of selectedBatchIds) {
         try {
@@ -347,7 +347,12 @@ export default function HistoryPage() {
           if (data.results && Array.isArray(data.results)) {
             data.results.forEach((result: HistoryResultRow) => {
               if (result.contacts && Array.isArray(result.contacts)) {
-                allContacts.push(...result.contacts);
+                // Add timestamp to each contact for later use
+                const contactsWithTime = result.contacts.map((contact) => ({
+                  ...contact,
+                  timestamp: result.timestamp,
+                }));
+                allContacts.push(...contactsWithTime);
               }
             });
           }
@@ -378,14 +383,17 @@ export default function HistoryPage() {
         return true;
       });
 
-      // Convert contacts to record format for Excel export
+      // Convert contacts to record format for Excel export with requested fields
       const contactRecords = uniqueContacts.map((contact) => ({
-        email: contact.email || "",
-        name: contact.name || "",
-        source: contact.source || "",
-        confidence: contact.confidence || "",
-        method: contact.method || "",
-        // Add any other fields needed
+        Email: contact.email || "",
+        Name: contact.name || "",
+        "Title/Position": contact.title || "",
+        "Source Website": contact.source || "",
+        "Scrape Date": contact.timestamp
+          ? new Date(contact.timestamp).toLocaleString()
+          : "",
+        Confidence: contact.confidence || "",
+        Method: contact.method || "",
       }));
 
       // Export to Excel
