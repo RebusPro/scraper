@@ -7,7 +7,7 @@ if (
   !process.env.SUPABASE_SERVICE_ROLE_KEY
 ) {
   console.error(
-    "Supabase environment variables (URL or Service Role Key) are not set."
+    "⚠️ Supabase environment variables (URL or Service Role Key) are not set."
   );
 }
 const supabase = createClient(
@@ -24,19 +24,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    console.log(`📊 Fetching status for batch: ${batchId}`);
+
     // Query the database for results matching the batchId
     const { data: results, error: dbError } = await supabase
-      .from("scraping_results") // Use your actual table name
-      .select("*") // Select all columns
-      .eq("batch_id", batchId) // Filter by batch_id
-      .order("created_at", { ascending: true }); // Optional: order by creation time
+      .from("scraping_results")
+      .select("*")
+      .eq("batch_id", batchId)
+      .order("created_at", { ascending: true });
 
     if (dbError) {
       console.error(
-        `Database error fetching status for Batch ID ${batchId}:`,
-        dbError
+        `❌ Database error fetching batch ${batchId}: ${dbError.message}`
       );
-      throw dbError; // Throw to be caught by the outer catch block
+      throw dbError;
     }
 
     // Process results: Parse contacts JSON
@@ -48,31 +49,54 @@ export async function GET(request: NextRequest) {
             parsedContacts = JSON.parse(row.contacts);
           } catch (e) {
             console.error(
-              `Failed to parse contacts JSON for URL ${row.url}, Batch ID ${batchId}:`,
-              e
+              `⚠️ JSON parse error for ${row.url}: ${
+                e instanceof Error ? e.message : "Unknown error"
+              }`
             );
-            // Keep contacts as null or the raw string depending on desired error handling
           }
         }
-        return { ...row, contacts: parsedContacts }; // Return with contacts parsed
+        return { ...row, contacts: parsedContacts };
       }) || [];
 
-    // TODO: We might also want to get the *total* number of expected jobs for this batchId
-    // to calculate progress accurately. This might require storing the total count
-    // somewhere when the batch is first submitted, or deriving it if possible.
-    // For now, we just return the results found so far.
     const progress = {
       processed: processedResults.length,
-      // total: totalJobsInBatch // Needs implementation
     };
+
+    // Count successes and failures
+    const successCount = processedResults.filter(
+      (r) => r.status === "success"
+    ).length;
+    const errorCount = processedResults.filter(
+      (r) => r.status === "error"
+    ).length;
+
+    // Count total emails found
+    const totalEmails = processedResults.reduce((sum, result) => {
+      return (
+        sum + (Array.isArray(result.contacts) ? result.contacts.length : 0)
+      );
+    }, 0);
+
+    console.log(
+      `📈 Batch ${batchId} status: ${processedResults.length} URLs processed (${successCount} ✅, ${errorCount} ❌), ${totalEmails} emails found`
+    );
 
     return NextResponse.json({
       message: `Status for Batch ID ${batchId}`,
-      progress: progress, // Include progress info
+      progress: progress,
       results: processedResults,
+      summary: {
+        successful: successCount,
+        failed: errorCount,
+        totalEmails: totalEmails,
+      },
     });
   } catch (error) {
-    console.error(`Error fetching status for Batch ID ${batchId}:`, error);
+    console.error(
+      `❌ Error fetching batch ${batchId}: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
     return NextResponse.json(
       { error: "Failed to fetch batch status" },
       { status: 500 }

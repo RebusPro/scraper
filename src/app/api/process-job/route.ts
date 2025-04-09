@@ -4,9 +4,20 @@ import { Receiver } from "@upstash/qstash";
 import { ImprovedPlaywrightScraper } from "@/lib/scraper/improvedPlaywrightScraper";
 import { ScrapedContact } from "@/lib/scraper/types";
 import { createClient } from "@supabase/supabase-js";
+import PQueue from "p-queue";
 
 // Set the maximum duration for this worker function
 export const maxDuration = 180;
+
+// Configure concurrency based on VPS resources - adjust based on your VPS capabilities
+// Usually 2-3 is a good number for a standard VPS
+const CONCURRENT_JOBS = 2;
+
+// Create a job queue with limited concurrency
+const jobQueue = new PQueue({ concurrency: CONCURRENT_JOBS });
+
+// Track active jobs for monitoring
+const activeJobs = new Map<string, { url: string; startTime: number }>();
 
 // Define the expected job payload structure (must match submit-batch)
 interface JobPayload {
@@ -34,7 +45,7 @@ if (
   !process.env.SUPABASE_SERVICE_ROLE_KEY
 ) {
   console.error(
-    "Supabase environment variables (URL or Service Role Key) are not set."
+    "⚠️ Supabase environment variables (URL or Service Role Key) are not set."
   );
   // Avoid throwing here during initialization, handle potential client errors during request
 }
@@ -46,40 +57,53 @@ const supabase = createClient(
 // Define the actual scraping logic as a separate async function
 async function runScrapingJob(jobPayload: JobPayload) {
   const { batchId, url, settings } = jobPayload;
+  const jobId = `${batchId}-${url}`;
   let scrapeResult: ScrapedContact[] | null = null;
   let errorMessage: string | null = null;
   let status: "success" | "error" = "success";
   let scraper: ImprovedPlaywrightScraper | null = null;
 
+  // Add to active jobs for monitoring
+  activeJobs.set(jobId, { url, startTime: Date.now() });
+
   console.log(
-    `BACKGROUND_DEBUG: Entered runScrapingJob for ${url}, Batch: ${batchId}`
+    `🚀 Starting job for: ${url} (Mode: ${
+      settings.mode || "standard"
+    }) - Queue status: ${activeJobs.size}/${CONCURRENT_JOBS} active`
   );
 
   try {
-    console.log(
-      `BACKGROUND: Processing job for URL: ${url}, Batch ID: ${batchId}`
-    );
     scraper = new ImprovedPlaywrightScraper();
 
     // --- Actual Scraping Logic ---
     try {
+      // Add timeout protection around the scrape operation
+      const timeoutPromise = new Promise<ScrapedContact[]>((_, reject) => {
+        const maxTimeout = settings.timeout || 600000; // 10 minutes default or use settings value
+        setTimeout(() => {
+          reject(
+            new Error(`⏱️ Scraping timeout after ${maxTimeout / 1000} seconds`)
+          );
+        }, maxTimeout);
+      });
+
+      console.log(`🔍 Scraping website: ${url} (${getHostname(url)})`);
+
+      scrapeResult = await Promise.race([
+        scraper.scrapeWebsite(url, settings),
+        timeoutPromise,
+      ]);
+
       console.log(
-        `BACKGROUND: Starting scrape for ${url} with settings: ${JSON.stringify(
-          settings
-        )}`
-      );
-      console.log(`BACKGROUND_DEBUG: Calling scraper.scrapeWebsite...`);
-      scrapeResult = await scraper.scrapeWebsite(url, settings);
-      console.log(`BACKGROUND_DEBUG: scraper.scrapeWebsite finished.`);
-      console.log(
-        `BACKGROUND: Scraping finished for ${url}. Found ${
+        `✅ Scraping completed for ${getHostname(url)}. Found ${
           scrapeResult?.length ?? 0
         } contacts.`
       );
     } catch (scrapeError: unknown) {
       console.error(
-        `BACKGROUND_ERROR: Error during scraper.scrapeWebsite for ${url}:`,
-        scrapeError
+        `❌ Error scraping ${getHostname(url)}: ${
+          scrapeError instanceof Error ? scrapeError.message : "Unknown error"
+        }`
       );
       errorMessage =
         scrapeError instanceof Error
@@ -92,10 +116,8 @@ async function runScrapingJob(jobPayload: JobPayload) {
 
     // --- Database Logic ---
     try {
-      console.log(
-        `BACKGROUND: Attempting to save result for ${url} (Batch ID: ${batchId}) to database...`
-      );
-      const { data, error: dbError } = await supabase
+      console.log(`💾 Saving results for ${getHostname(url)} to database...`);
+      const { error: dbError } = await supabase
         .from("scraping_results")
         .insert([
           {
@@ -111,41 +133,56 @@ async function runScrapingJob(jobPayload: JobPayload) {
       if (dbError) {
         throw dbError; // Throw to be caught by the outer catch block
       }
-      console.log(
-        `BACKGROUND: Successfully saved result for ${url} (Batch ID: ${batchId})`,
-        data
-      );
     } catch (dbError: unknown) {
       console.error(
-        `BACKGROUND_ERROR: DATABASE ERROR saving result for ${url} (Batch ID: ${batchId}):`,
-        dbError
+        `❌ Database error for ${getHostname(url)}: ${
+          dbError instanceof Error ? dbError.message : "Unknown error"
+        }`
       );
-      // Log DB error - the job is already considered successful by QStash
-      // We might want to update the status in a separate step if critical
     }
     // --- End Database Logic ---
-    console.log(`BACKGROUND_DEBUG: Reached end of try block for ${url}.`);
   } catch (jobProcessingError: unknown) {
     console.error(
-      "BACKGROUND_ERROR: Unhandled error during job processing:",
-      jobProcessingError
+      `❌ Unhandled job error for ${getHostname(url)}: ${
+        jobProcessingError instanceof Error
+          ? jobProcessingError.message
+          : "Unknown error"
+      }`
     );
-    // Log unhandled errors - QStash won't retry based on this
   } finally {
-    console.log(`BACKGROUND_DEBUG: Entering finally block for ${url}.`);
     // Ensure the browser instance is closed
     if (scraper) {
-      console.log(`BACKGROUND: Closing browser instance for ${url}`);
       await scraper.close().catch((closeErr: Error) => {
         console.error(
-          `BACKGROUND_ERROR: Error closing scraper for ${url}:`,
-          closeErr
+          `⚠️ Browser close error for ${getHostname(url)}: ${closeErr.message}`
         );
       });
     }
+
+    // Calculate job duration before removing from active jobs
+    const startTime = activeJobs.get(jobId)?.startTime || Date.now();
+    const duration = (Date.now() - startTime) / 1000;
+
+    // Remove from active jobs map
+    activeJobs.delete(jobId);
+
     console.log(
-      `BACKGROUND: Job processing finished for ${url}, Batch ID: ${batchId}`
+      `🏁 Job completed: ${getHostname(url)} (${duration.toFixed(
+        2
+      )}s) - Queue status: ${activeJobs.size}/${CONCURRENT_JOBS} active, ${
+        jobQueue.size
+      } pending`
     );
+  }
+}
+
+// Helper to get readable hostname from URL
+function getHostname(urlString: string): string {
+  try {
+    const url = new URL(urlString);
+    return url.hostname;
+  } catch {
+    return urlString;
   }
 }
 
@@ -159,7 +196,7 @@ export async function POST(request: Request) {
       body: bodyText,
     });
   } catch (error) {
-    console.error("Signature verification failed:", error);
+    console.error("❌ Signature verification failed:", error);
     return new Response("Invalid signature", { status: 401 });
   }
 
@@ -168,10 +205,7 @@ export async function POST(request: Request) {
   try {
     jobPayload = JSON.parse(bodyText);
   } catch (parseError: unknown) {
-    console.error(
-      "Error parsing job payload before acknowledgment:",
-      parseError
-    );
+    console.error("❌ Error parsing job payload:", parseError);
     // Return a 400 Bad Request - QStash might retry this depending on settings
     return NextResponse.json(
       { success: false, error: "Failed to parse job payload" },
@@ -181,14 +215,19 @@ export async function POST(request: Request) {
 
   // Signature and basic parsing are valid. Acknowledge QStash immediately.
   console.log(
-    `Acknowledging QStash for job: ${jobPayload.url}, Batch: ${jobPayload.batchId}`
+    `📬 Received job for: ${getHostname(jobPayload.url)} | Queue status: ${
+      jobQueue.size
+    } waiting, ${jobQueue.pending} running`
   );
 
-  // Start the actual job processing asynchronously *without* awaiting it.
-  runScrapingJob(jobPayload).catch((err) => {
-    console.error("Error running background scraping job (uncaught):", err);
-    // This error handling is for the async function itself, separate from the response to QStash
-  });
+  // Add the job to the queue instead of running it immediately
+  jobQueue
+    .add(() => runScrapingJob(jobPayload))
+    .catch((err) => {
+      console.error(
+        `❌ Queue error for ${getHostname(jobPayload.url)}: ${err.message}`
+      );
+    });
 
   // Return 202 Accepted immediately
   return NextResponse.json({ message: "Accepted" }, { status: 202 });
