@@ -5,6 +5,7 @@ import ResultsDisplay from "@/components/ResultsDisplay"; // Reuse the results d
 import { ScrapingResult, ScrapedContact } from "@/lib/scraper/types"; // Import necessary types
 // Import export utilities
 import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
+import { toast } from "react-hot-toast";
 
 // Define types for the data fetched from the APIs
 interface BatchSummary {
@@ -51,6 +52,27 @@ export default function HistoryPage() {
   // Filter State
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
+
+  // Add state for tracking batch deletion
+  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
+
+  // Export modal state
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportBatchPage, setExportBatchPage] = useState(1);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportBatches, setExportBatches] = useState<
+    Array<{
+      batchId: string;
+      startTime: string;
+      selected: boolean;
+      expanded: boolean;
+      urls?: string[];
+    }>
+  >([]);
+  const [totalExportPages, setTotalExportPages] = useState(1);
+  const [exportBatchesTotalCount, setExportBatchesTotalCount] = useState(0);
+  const [exportInProgress, setExportInProgress] = useState(false);
+  const [loadingBatchUrls, setLoadingBatchUrls] = useState<string | null>(null);
 
   // Hover State for URL Tooltip
   const [hoveredBatchId, setHoveredBatchId] = useState<string | null>(null);
@@ -242,6 +264,282 @@ export default function HistoryPage() {
     fetchBatches(1); // Fetch without filters
   };
 
+  // Handle batch deletion
+  const handleDeleteBatch = async (batchId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent selecting the batch when clicking delete
+
+    if (
+      !confirm(
+        "Are you sure you want to delete this batch? This action cannot be undone."
+      )
+    ) {
+      return;
+    }
+
+    setDeletingBatchId(batchId);
+
+    try {
+      const response = await fetch(`/api/history/delete?batchId=${batchId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || `Failed to delete batch: ${response.statusText}`
+        );
+      }
+
+      // On success, remove the batch from the local state
+      setBatchList((prevList) =>
+        prevList.filter((batch) => batch.batchId !== batchId)
+      );
+
+      // If the deleted batch was selected, clear the selection
+      if (selectedBatchId === batchId) {
+        setSelectedBatchId(null);
+        setSelectedBatchResults([]);
+      }
+
+      // Update total count
+      setTotalBatches((prev) => prev - 1);
+
+      toast.success("Batch deleted successfully");
+    } catch (err) {
+      console.error("Error deleting batch:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to delete batch"
+      );
+    } finally {
+      setDeletingBatchId(null);
+    }
+  };
+
+  const handleExportSelectedBatches = async () => {
+    // Get selected batch IDs
+    const selectedBatchIds = exportBatches
+      .filter((batch) => batch.selected)
+      .map((batch) => batch.batchId);
+
+    if (selectedBatchIds.length === 0) {
+      toast.error("Please select at least one batch to export");
+      return;
+    }
+
+    setExportInProgress(true);
+
+    try {
+      // Fetch all contacts from selected batches
+      const allContacts: Array<ScrapedContact & { timestamp?: string }> = [];
+
+      for (const batchId of selectedBatchIds) {
+        try {
+          // Use the results endpoint instead of batch endpoint
+          const response = await fetch(
+            `/api/history/results?batchId=${batchId}`
+          );
+          if (!response.ok) {
+            throw new Error(`Failed to fetch batch ${batchId}`);
+          }
+
+          const data = await response.json();
+          // Extract contacts from results
+          if (data.results && Array.isArray(data.results)) {
+            data.results.forEach((result: HistoryResultRow) => {
+              if (result.contacts && Array.isArray(result.contacts)) {
+                // Add timestamp to each contact for later use
+                const contactsWithTime = result.contacts.map((contact) => ({
+                  ...contact,
+                  timestamp: result.timestamp,
+                }));
+                allContacts.push(...contactsWithTime);
+              }
+            });
+          }
+        } catch (batchError) {
+          console.error(`Error fetching batch ${batchId}:`, batchError);
+          toast.error(`Could not fetch batch ${batchId.substring(0, 8)}...`);
+          // Continue with other batches even if one fails
+        }
+      }
+
+      if (allContacts.length === 0) {
+        toast.error("No contacts found in the selected batches");
+        setExportInProgress(false);
+        return;
+      }
+
+      // Remove duplicates based on email
+      const uniqueEmails = new Set<string>();
+      const uniqueContacts = allContacts.filter((contact) => {
+        if (!contact.email) return false;
+
+        const email = contact.email.toLowerCase().trim();
+        if (uniqueEmails.has(email)) {
+          return false;
+        }
+
+        uniqueEmails.add(email);
+        return true;
+      });
+
+      // Convert contacts to record format for Excel export with requested fields
+      const contactRecords = uniqueContacts.map((contact) => ({
+        Email: contact.email || "",
+        Name: contact.name || "",
+        "Title/Position": contact.title || "",
+        "Source Website": contact.source || "",
+        "Scrape Date": contact.timestamp
+          ? new Date(contact.timestamp).toLocaleString()
+          : "",
+        Confidence: contact.confidence || "",
+        Method: contact.method || "",
+      }));
+
+      // Export to Excel
+      const now = new Date().toISOString().replace(/[:.]/g, "-");
+
+      try {
+        // The exportToExcel function returns Promise<void>, not a boolean
+        await exportToExcel(contactRecords, `email-export-${now}`);
+
+        // If we reach here, export was successful (no exception was thrown)
+        const dupesRemoved = allContacts.length - uniqueContacts.length;
+        if (dupesRemoved > 0) {
+          toast.success(
+            `Export complete! ${dupesRemoved} duplicate emails were removed.`
+          );
+        } else {
+          toast.success("Export complete!");
+        }
+        // Close the modal on success
+        setShowExportModal(false);
+      } catch (exportError) {
+        console.error("Export error:", exportError);
+        toast.error("Failed to generate Excel file");
+      }
+    } catch (error) {
+      console.error("Export error:", error);
+      toast.error(error instanceof Error ? error.message : "Export failed");
+    } finally {
+      setExportInProgress(false);
+    }
+  };
+
+  const openExportModal = async () => {
+    setShowExportModal(true);
+    setExportBatches([]);
+    setExportBatchPage(1);
+    await fetchExportBatches(1);
+  };
+
+  const fetchExportBatches = async (page: number) => {
+    setExportLoading(true);
+
+    try {
+      // Use the same filters as the main batch list
+      let url = `/api/history/batches?page=${page}&limit=10`;
+
+      if (startDate) {
+        url += `&startDate=${encodeURIComponent(startDate)}`;
+      }
+
+      if (endDate) {
+        url += `&endDate=${encodeURIComponent(endDate)}`;
+      }
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch batches for export");
+      }
+
+      const data = await response.json();
+
+      setExportBatches(
+        data.batches.map((batch: { batchId: string; startTime: string }) => ({
+          batchId: batch.batchId,
+          startTime: batch.startTime,
+          selected: false,
+          expanded: false,
+        }))
+      );
+
+      setTotalExportPages(Math.ceil(data.total / 10));
+      setExportBatchesTotalCount(data.total);
+    } catch (error) {
+      console.error("Error fetching export batches:", error);
+      toast.error("Failed to load batches for export");
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleExportBatchCheckbox = (batchId: string) => {
+    setExportBatches((prev) =>
+      prev.map((batch) =>
+        batch.batchId === batchId
+          ? { ...batch, selected: !batch.selected }
+          : batch
+      )
+    );
+  };
+
+  const handleToggleBatchExpand = async (batchId: string) => {
+    // Find the batch
+    const batch = exportBatches.find((b) => b.batchId === batchId);
+
+    if (!batch) return;
+
+    // If already expanded, just toggle closed
+    if (batch.expanded) {
+      setExportBatches((prev) =>
+        prev.map((b) => (b.batchId === batchId ? { ...b, expanded: false } : b))
+      );
+      return;
+    }
+
+    // If URLs already loaded, just expand
+    if (batch.urls) {
+      setExportBatches((prev) =>
+        prev.map((b) => (b.batchId === batchId ? { ...b, expanded: true } : b))
+      );
+      return;
+    }
+
+    // Need to fetch URLs
+    setLoadingBatchUrls(batchId);
+
+    try {
+      const response = await fetch(
+        `/api/history/batch-urls?batchId=${batchId}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to load URLs for this batch");
+      }
+
+      const data = await response.json();
+
+      setExportBatches((prev) =>
+        prev.map((b) =>
+          b.batchId === batchId
+            ? { ...b, expanded: true, urls: data.urls || [] }
+            : b
+        )
+      );
+    } catch (error) {
+      console.error(`Error loading URLs for batch ${batchId}:`, error);
+      toast.error("Failed to load URLs for this batch");
+    } finally {
+      setLoadingBatchUrls(null);
+    }
+  };
+
+  const handleSelectAllExportBatches = (selected: boolean) => {
+    setExportBatches((prev) => prev.map((batch) => ({ ...batch, selected })));
+  };
+
   // --- URL Tooltip Handlers ---
   const handleBadgeMouseEnter = async (batchId: string) => {
     // Avoid fetching if already hovering same batch or already loading
@@ -285,9 +583,62 @@ export default function HistoryPage() {
       <div className="container mx-auto relative">
         {" "}
         {/* Added relative for tooltip positioning */}
-        <h1 className="text-3xl font-bold text-gray-800 dark:text-white mb-6">
-          Scraping History
-        </h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Scraping History
+          </h1>
+          <div className="flex space-x-3">
+            <button
+              onClick={openExportModal}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={batchList.length === 0}
+            >
+              {isHistoryDownloading ? (
+                <>
+                  <svg
+                    className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="-ml-1 mr-2 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                  Export Selected Batches
+                </>
+              )}
+            </button>
+          </div>
+        </div>
         {error && (
           <div
             className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4"
@@ -390,60 +741,107 @@ export default function HistoryPage() {
                           <p className="font-semibold text-sm text-gray-800 dark:text-gray-100">
                             {new Date(batch.startTime).toLocaleString()}
                           </p>
-                          <span
-                            onMouseEnter={() =>
-                              handleBadgeMouseEnter(batch.batchId)
-                            }
-                            onMouseLeave={handleBadgeMouseLeave}
-                            className="flex-shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300 whitespace-nowrap cursor-help relative" // Added cursor-help, relative
-                            title={`${batch.processedCount} URLs Processed`}
-                          >
-                            {batch.processedCount} URLs
-                            {/* Tooltip Content - Absolutely Positioned */}
-                            {hoveredBatchId === batch.batchId && (
-                              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-2 text-xs text-white bg-gray-900 dark:bg-gray-700 rounded-md shadow-lg z-10 break-words">
-                                {isLoadingUrls && <p>Loading URLs...</p>}
-                                {urlError && (
-                                  <p className="text-red-400">
-                                    Error: {urlError}
-                                  </p>
-                                )}
-                                {hoveredUrls &&
-                                  !isLoadingUrls &&
-                                  !urlError &&
-                                  (hoveredUrls.length > 0 ? (
-                                    <>
-                                      <p className="font-semibold mb-1 border-b border-gray-600 pb-1">
-                                        Scraped URLs:
-                                      </p>
-                                      <ul className="list-disc list-inside max-h-40 overflow-y-auto">
-                                        {hoveredUrls.slice(0, 15).map(
-                                          (
-                                            url,
-                                            i // Limit display length
-                                          ) => (
-                                            <li
-                                              key={i}
-                                              className="truncate"
-                                              title={url}
-                                            >
-                                              {url}
-                                            </li>
-                                          )
-                                        )}
-                                      </ul>
-                                      {hoveredUrls.length > 15 && (
-                                        <p className="text-center text-gray-400 mt-1">
-                                          ...and {hoveredUrls.length - 15} more
+                          <div className="flex space-x-2 items-center">
+                            <span
+                              onMouseEnter={() =>
+                                handleBadgeMouseEnter(batch.batchId)
+                              }
+                              onMouseLeave={handleBadgeMouseLeave}
+                              className="flex-shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300 whitespace-nowrap cursor-help relative" // Added cursor-help, relative
+                              title={`${batch.processedCount} URLs Processed`}
+                            >
+                              {batch.processedCount} URLs
+                              {/* Tooltip Content - Absolutely Positioned */}
+                              {hoveredBatchId === batch.batchId && (
+                                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-2 text-xs text-white bg-gray-900 dark:bg-gray-700 rounded-md shadow-lg z-10 break-words">
+                                  {isLoadingUrls && <p>Loading URLs...</p>}
+                                  {urlError && (
+                                    <p className="text-red-400">
+                                      Error: {urlError}
+                                    </p>
+                                  )}
+                                  {hoveredUrls &&
+                                    !isLoadingUrls &&
+                                    !urlError &&
+                                    (hoveredUrls.length > 0 ? (
+                                      <>
+                                        <p className="font-semibold mb-1 border-b border-gray-600 pb-1">
+                                          Scraped URLs:
                                         </p>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <p>No URLs found for this batch.</p>
-                                  ))}
-                              </div>
-                            )}
-                          </span>
+                                        <ul className="list-disc list-inside max-h-40 overflow-y-auto">
+                                          {hoveredUrls.slice(0, 15).map(
+                                            (
+                                              url,
+                                              i // Limit display length
+                                            ) => (
+                                              <li
+                                                key={i}
+                                                className="truncate"
+                                                title={url}
+                                              >
+                                                {url}
+                                              </li>
+                                            )
+                                          )}
+                                        </ul>
+                                        {hoveredUrls.length > 15 && (
+                                          <p className="text-center text-gray-400 mt-1">
+                                            ...and {hoveredUrls.length - 15}{" "}
+                                            more
+                                          </p>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <p>No URLs found for this batch.</p>
+                                    ))}
+                                </div>
+                              )}
+                            </span>
+                            <button
+                              className="p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 focus:outline-none"
+                              onClick={(e) =>
+                                handleDeleteBatch(batch.batchId, e)
+                              }
+                              disabled={deletingBatchId === batch.batchId}
+                              title="Delete batch"
+                            >
+                              {deletingBatchId === batch.batchId ? (
+                                <svg
+                                  className="animate-spin h-4 w-4"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  ></circle>
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  ></path>
+                                </svg>
+                              ) : (
+                                <svg
+                                  className="h-4 w-4"
+                                  fill="currentColor"
+                                  viewBox="0 0 20 20"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+                                    clipRule="evenodd"
+                                  ></path>
+                                </svg>
+                              )}
+                            </button>
+                          </div>
                         </div>
                       </button>
                     </li>
@@ -510,6 +908,301 @@ export default function HistoryPage() {
           </div>
         </div>
       </div>
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center">
+            <div
+              className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+              onClick={() => !exportInProgress && setShowExportModal(false)}
+            ></div>
+
+            <div className="relative inline-block align-bottom bg-white dark:bg-gray-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+              <div className="px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div className="sm:flex sm:items-start">
+                  <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900 dark:text-white">
+                      Select Batches to Export
+                    </h3>
+                    <div className="mt-4">
+                      <div className="flex justify-between mb-2">
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          Select the batches you want to export. Total:{" "}
+                          {exportBatchesTotalCount} batches
+                        </p>
+
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            id="select-all"
+                            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                            onChange={(e) =>
+                              handleSelectAllExportBatches(e.target.checked)
+                            }
+                            checked={
+                              exportBatches.length > 0 &&
+                              exportBatches.every((b) => b.selected)
+                            }
+                            disabled={exportInProgress}
+                          />
+                          <label
+                            htmlFor="select-all"
+                            className="ml-2 text-sm text-gray-700 dark:text-gray-300"
+                          >
+                            Select All
+                          </label>
+                        </div>
+                      </div>
+
+                      {exportLoading ? (
+                        <div className="flex justify-center py-10">
+                          <svg
+                            className="animate-spin h-8 w-8 text-indigo-600"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            ></circle>
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            ></path>
+                          </svg>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="space-y-2 max-h-80 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                            {exportBatches.map((batch) => (
+                              <div
+                                key={batch.batchId}
+                                className="rounded-md bg-gray-50 dark:bg-gray-800 overflow-hidden"
+                              >
+                                <div className="flex items-center justify-between p-3">
+                                  <div className="flex items-center flex-1">
+                                    <input
+                                      type="checkbox"
+                                      id={`batch-${batch.batchId}`}
+                                      className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                      checked={batch.selected}
+                                      onChange={() =>
+                                        handleExportBatchCheckbox(batch.batchId)
+                                      }
+                                      disabled={exportInProgress}
+                                    />
+                                    <label
+                                      htmlFor={`batch-${batch.batchId}`}
+                                      className="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                                    >
+                                      {new Date(
+                                        batch.startTime
+                                      ).toLocaleString()}{" "}
+                                      - Batch ID:{" "}
+                                      {batch.batchId.substring(0, 8)}...
+                                    </label>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleToggleBatchExpand(batch.batchId)
+                                    }
+                                    className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 focus:outline-none"
+                                    aria-expanded={batch.expanded}
+                                    disabled={
+                                      loadingBatchUrls === batch.batchId
+                                    }
+                                  >
+                                    {loadingBatchUrls === batch.batchId ? (
+                                      <svg
+                                        className="animate-spin h-5 w-5"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <circle
+                                          className="opacity-25"
+                                          cx="12"
+                                          cy="12"
+                                          r="10"
+                                          stroke="currentColor"
+                                          strokeWidth="4"
+                                        ></circle>
+                                        <path
+                                          className="opacity-75"
+                                          fill="currentColor"
+                                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                        ></path>
+                                      </svg>
+                                    ) : batch.expanded ? (
+                                      <svg
+                                        className="h-5 w-5"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M5 15l7-7 7 7"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <svg
+                                        className="h-5 w-5"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M19 9l-7 7-7-7"
+                                        />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+
+                                {/* Collapsible URL list */}
+                                {batch.expanded && (
+                                  <div className="px-3 pb-3 pt-0 text-sm border-t border-gray-200 dark:border-gray-700">
+                                    <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
+                                      Scraped URLs:
+                                    </p>
+                                    {batch.urls && batch.urls.length > 0 ? (
+                                      <ul className="text-xs text-gray-600 dark:text-gray-400 space-y-1 pl-2 max-h-32 overflow-y-auto">
+                                        {batch.urls.map((url, idx) => (
+                                          <li key={idx} className="break-all">
+                                            • {url}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="text-xs text-gray-500 italic">
+                                        No URLs found for this batch
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+
+                            {exportBatches.length === 0 && (
+                              <p className="text-center py-4 text-gray-500 dark:text-gray-400">
+                                No batches found matching the current filters
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Pagination */}
+                          {totalExportPages > 1 && (
+                            <div className="flex justify-center mt-4 space-x-2">
+                              <button
+                                onClick={() => {
+                                  setExportBatchPage((prev) =>
+                                    Math.max(prev - 1, 1)
+                                  );
+                                  fetchExportBatches(exportBatchPage - 1);
+                                }}
+                                disabled={
+                                  exportBatchPage === 1 || exportInProgress
+                                }
+                                className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                              >
+                                Previous
+                              </button>
+
+                              <span className="px-3 py-1 text-sm text-gray-700 dark:text-gray-300">
+                                Page {exportBatchPage} of {totalExportPages}
+                              </span>
+
+                              <button
+                                onClick={() => {
+                                  setExportBatchPage((prev) =>
+                                    Math.min(prev + 1, totalExportPages)
+                                  );
+                                  fetchExportBatches(exportBatchPage + 1);
+                                }}
+                                disabled={
+                                  exportBatchPage === totalExportPages ||
+                                  exportInProgress
+                                }
+                                className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button
+                  type="button"
+                  onClick={handleExportSelectedBatches}
+                  disabled={
+                    exportInProgress || exportBatches.every((b) => !b.selected)
+                  }
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                >
+                  {exportInProgress ? (
+                    <>
+                      <svg
+                        className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
+                      </svg>
+                      Exporting...
+                    </>
+                  ) : (
+                    "Export Selected"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-gray-700 text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                  onClick={() => setShowExportModal(false)}
+                  disabled={exportInProgress}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

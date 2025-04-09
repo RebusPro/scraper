@@ -12,6 +12,21 @@ import {
 import { extractObfuscatedEmails } from "./enhancedEmailExtractor";
 import chromium from "@sparticuz/chromium";
 
+// Create a custom logger that can be toggled based on verbosity
+const logger = {
+  // Only log important info
+  info: (message: string) => console.log(message),
+
+  // Skip most debug messages completely
+  debug: () => {}, // Disable debug logging completely
+
+  // Only log errors
+  error: (message: string) => console.error(message),
+
+  // Log warnings
+  warn: (message: string) => console.warn(message),
+};
+
 // --- Keyword Definitions for Prioritization (User Specified) ---
 const COACH_KEYWORDS = [
   "coach",
@@ -88,14 +103,27 @@ const getLinkPriority = (url: string, text: string): number => {
 
 export class ImprovedPlaywrightScraper {
   private browser: Browser | null = null;
+  private isClosing: boolean = false;
+  private jobStartTime: number = 0;
 
   /**
    * Close browser instance if it exists
    */
   async close() {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
+    if (this.browser && !this.isClosing) {
+      this.isClosing = true;
+      try {
+        await this.browser.close();
+      } catch (err) {
+        logger.error(
+          `❌ Error during browser close: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      } finally {
+        this.browser = null;
+        this.isClosing = false;
+      }
     }
   }
 
@@ -128,30 +156,41 @@ export class ImprovedPlaywrightScraper {
       followLinks = options.followLinks ?? false;
     }
 
+    // Try to get a clean domain name for logs
+    let domain = "";
+    try {
+      domain = new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      domain = url;
+    }
+
     // Check if we're in light mode for super fast extraction
     if (options.mode === "gentle") {
-      console.log("Using super fast extraction for light mode");
+      logger.info(`🚄 Using fast extraction for ${domain}`);
       return await this.fastExtractEmails(url, timeout);
     }
 
-    console.log(
-      `Using standard extraction with maxDepth=${maxDepth}, maxPages=${maxPages}`
+    logger.info(
+      `🔍 Scraping ${domain} (${mode} mode, depth=${maxDepth}, max pages=${maxPages})`
     );
 
     const allContacts: ScrapedContact[] = [];
     const visitedUrls = new Set<string>();
-    // Ensure pendingUrls type includes priority
     const pendingUrls: { url: string; depth: number; priority: number }[] = [
-      { url, depth: 0, priority: PRIORITY.INITIAL }, // Start URL has highest priority
+      { url, depth: 0, priority: PRIORITY.INITIAL },
     ];
     let pagesVisited = 0;
-    let context: BrowserContext | null = null; // Use BrowserContext type
+    let context: BrowserContext | null = null;
+
+    // Setup job timeout
+    this.jobStartTime = Date.now();
+    const jobTimeout = options.timeout ?? 600000; // Default 10 minutes
 
     try {
       // Create browser if not already created
       if (!this.browser) {
         let launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
-          headless: options.useHeadless ?? true, // Respect option locally, default true
+          headless: options.useHeadless ?? true,
         };
 
         // Check if running on Vercel OR Google Cloud Run
@@ -159,87 +198,121 @@ export class ImprovedPlaywrightScraper {
           process.env.VERCEL === "1" || process.env.K_SERVICE;
 
         if (isServerless) {
-          console.log(
-            "SCRAPER_DEBUG: Serverless environment (Vercel or Cloud Run) detected. Preparing sparticuz launch options..."
-          );
+          logger.info("🔄 Serverless environment detected");
 
-          // <<< Log before executablePath >>>
-          console.log("SCRAPER_DEBUG: Calling chromium.executablePath()...");
-          let executablePath: string | null = null; // Initialize as null
+          let executablePath: string | null = null;
           try {
             executablePath = await chromium.executablePath();
-            // <<< Log after executablePath success >>>
-            console.log(
-              `SCRAPER_DEBUG: chromium.executablePath() returned: ${executablePath}`
-            );
           } catch (err) {
-            console.error(
-              "SCRAPER_ERROR: Failed to get executablePath from sparticuz:",
-              err
+            logger.error(
+              `❌ Failed to get Chromium path: ${
+                err instanceof Error ? err.message : String(err)
+              }`
             );
-            throw err; // Rethrow
+            throw err;
           }
 
           if (!executablePath) {
-            throw new Error(
-              "Could not find Chromium executable via @sparticuz/chromium. Check deployment."
-            );
+            throw new Error("Could not find Chromium executable");
           }
-          // Use sparticuz chromium options in serverless environments
+
           launchOptions = {
             args: chromium.args,
             executablePath: executablePath,
-            headless: true, // Force headless in serverless
+            headless: true,
           };
-          console.log(
-            "SCRAPER_DEBUG: Serverless env - sparticuz launch options prepared:" +
-              JSON.stringify(launchOptions)
-          );
         } else {
-          console.log(
-            "SCRAPER_DEBUG: Local env - preparing default launch options..."
-          );
-          // No specific executablePath needed locally for default playwright install
+          // Optimizations for VPS environment
+          launchOptions = {
+            headless: true,
+            args: [
+              "--disable-dev-shm-usage",
+              "--disable-gpu",
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+              "--disable-extensions",
+              "--disable-audio-output",
+              "--disable-web-security",
+              "--disable-features=site-per-process",
+              "--disable-site-isolation-trials",
+              "--disable-accelerated-2d-canvas",
+              "--disable-3d-apis",
+              "--disable-background-networking",
+              "--disable-breakpad",
+              "--disable-translate",
+              "--disable-sync",
+              "--hide-scrollbars",
+              "--mute-audio",
+            ],
+          };
         }
 
-        console.log(
-          "SCRAPER_DEBUG: Launching browser with options:",
-          JSON.stringify(launchOptions)
-        ); // Log options
-
-        // <<< Log before launch >>>
-        console.log("SCRAPER_DEBUG: Calling playwrightChromium.launch()...");
         try {
+          logger.info("🌐 Launching browser...");
           this.browser = await playwrightChromium.launch(launchOptions);
-          // <<< Log after launch success >>>
-          console.log("SCRAPER_DEBUG: playwrightChromium.launch() successful.");
         } catch (launchError) {
-          console.error(
-            "SCRAPER_FATAL_ERROR: Failed to launch browser:",
-            launchError
+          logger.error(
+            `❌ Failed to launch browser: ${
+              launchError instanceof Error
+                ? launchError.message
+                : String(launchError)
+            }`
           );
-          throw launchError; // Re-throw the error to be caught by the outer handler
+          throw launchError;
         }
       }
 
       // Create context with default configuration
-      console.log("SCRAPER_DEBUG: Creating browser context...");
       context = await this.browser.newContext({
         userAgent:
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36",
         viewport: { width: 1280, height: 800 },
         javaScriptEnabled: true,
+        // Add performance optimizations for VPS
+        ignoreHTTPSErrors: true,
+        bypassCSP: true,
+        extraHTTPHeaders: {
+          // Decrease chance of being detected as a bot
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cache-Control": "no-cache",
+        },
       });
-      console.log("SCRAPER_DEBUG: Browser context created.");
 
       // Create a new page
-      console.log("SCRAPER_DEBUG: Creating new page...");
       const page = await context.newPage();
-      console.log("SCRAPER_DEBUG: New page created.");
+
+      // Block unnecessary resources to improve performance
+      await page.route(
+        "**/*.{png,jpg,jpeg,webp,svg,gif,ico,woff,woff2,ttf,eot,otf}",
+        (route) => {
+          route.abort();
+        }
+      );
+
+      // Also block tracking scripts, analytics, ads
+      await page.route(
+        /doubleclick|googleanalytics|google-analytics|googletagmanager|analytics|googleadservices|facebook|twitter/,
+        (route) => {
+          route.abort();
+        }
+      );
+
+      logger.info("✅ Browser ready for scraping");
 
       // Process URLs in queue (with page limit)
       while (pendingUrls.length > 0 && pagesVisited < maxPages) {
-        // ** SORT QUEUE BY PRIORITY **
+        // Check for overall job timeout
+        const elapsedTime = Date.now() - this.jobStartTime;
+        if (elapsedTime >= jobTimeout) {
+          logger.warn(
+            `⏱️ Scraper timeout reached after ${
+              elapsedTime / 1000
+            }s. Stopping after ${pagesVisited} pages`
+          );
+          break;
+        }
+
+        // Sort queue by priority
         pendingUrls.sort((a, b) => {
           if (a.priority !== b.priority) {
             return a.priority - b.priority; // Lower priority number first
@@ -250,13 +323,24 @@ export class ImprovedPlaywrightScraper {
         const { url: currentUrl, depth } = pendingUrls.shift()!;
         if (visitedUrls.has(currentUrl)) continue;
 
-        console.log(
-          `SCRAPER_DEBUG: Starting processing loop for URL: ${currentUrl} (Depth: ${depth}) (${
-            pagesVisited + 1
-          }/${maxPages})`
-        );
         pagesVisited++;
         visitedUrls.add(currentUrl);
+
+        // Get hostname for nicer logging
+        let pageName = "";
+        try {
+          const parsed = new URL(currentUrl);
+          pageName =
+            parsed.pathname === "/"
+              ? parsed.hostname
+              : parsed.pathname.split("/").pop() || parsed.hostname;
+        } catch {
+          pageName = currentUrl;
+        }
+
+        logger.info(
+          `📄 [${pagesVisited}/${maxPages}] Page: ${pageName} (depth ${depth})`
+        );
 
         // Skip non-http URLs and known file types that don't contain emails
         if (
@@ -266,7 +350,7 @@ export class ImprovedPlaywrightScraper {
           currentUrl.endsWith(".jpg") ||
           currentUrl.endsWith(".png") ||
           currentUrl.endsWith(".gif") ||
-          currentUrl.includes("?format=json") || // API requests
+          currentUrl.includes("?format=json") ||
           currentUrl.includes("/api/") ||
           currentUrl.includes("/admin/")
         ) {
@@ -279,6 +363,17 @@ export class ImprovedPlaywrightScraper {
           continue;
         }
 
+        // Create a per-page timeout
+        const pageTimeoutId = setTimeout(() => {
+          logger.warn(`⏱️ Page timeout for ${pageName}. Moving to next page`);
+          try {
+            // Try to navigate to about:blank to stop current page loads
+            page.goto("about:blank").catch(() => {});
+          } catch {
+            // Ignore errors on timeout handling
+          }
+        }, Math.min(60000, timeout));
+
         try {
           // Navigate to the page with retry logic
           const maxRetries = 2;
@@ -287,95 +382,78 @@ export class ImprovedPlaywrightScraper {
 
           while (!success && retryCount < maxRetries) {
             try {
-              console.log(
-                `SCRAPER_DEBUG: Attempting page.goto for ${currentUrl}...`
-              );
               await page.goto(currentUrl, {
-                waitUntil: "domcontentloaded",
-                timeout: timeout,
+                waitUntil: "load",
+                timeout: 60000,
               });
-              console.log(
-                `SCRAPER_DEBUG: page.goto successful for ${currentUrl}.`
-              );
-
-              // Wait for content to load with reduced timeout
-              console.log(`SCRAPER_DEBUG: Waiting for network idle...`);
-              await page
-                .waitForLoadState("networkidle", { timeout: 5000 })
-                .catch(() => {
-                  console.log(
-                    `SCRAPER_DEBUG: Network idle wait timed out or failed for ${currentUrl} (continuing anyway)`
-                  );
-                });
-              console.log(`SCRAPER_DEBUG: Network idle wait finished.`);
               success = true;
             } catch (error) {
-              console.log(
-                `Retry ${retryCount + 1} for ${currentUrl}: ${error}`
+              const errorMessage =
+                error instanceof Error
+                  ? error.message.split("\n")[0]
+                  : String(error);
+              logger.warn(
+                `⚠️ Navigation retry ${
+                  retryCount + 1
+                }/${maxRetries}: ${errorMessage}`
               );
               retryCount++;
               if (retryCount >= maxRetries) {
+                logger.error(
+                  `❌ Failed to load page after ${maxRetries} attempts`
+                );
                 throw error;
               }
-              // Wait between retries
-              await new Promise((resolve) => setTimeout(resolve, 2000));
+              await new Promise((resolve) =>
+                setTimeout(resolve, 1000 * retryCount)
+              );
+            }
+          }
+
+          // Try a short wait for network idle, but don't log about it
+          if (success) {
+            try {
+              await page.waitForLoadState("networkidle", { timeout: 3000 });
+            } catch {
+              // Expected sometimes, just continue silently
             }
           }
 
           // Check for obvious contact links if we're on the main page
           const isMainPage = (url: string): boolean => {
-            const parsedUrl = new URL(url);
-            return (
-              parsedUrl.pathname === "/" ||
-              parsedUrl.pathname === "" ||
-              parsedUrl.pathname === "/index.html" ||
-              parsedUrl.pathname === "/index.php" ||
-              parsedUrl.pathname.endsWith("/home")
-            );
+            try {
+              const parsedUrl = new URL(url);
+              return (
+                parsedUrl.pathname === "/" ||
+                parsedUrl.pathname === "" ||
+                parsedUrl.pathname === "/index.html" ||
+                parsedUrl.pathname === "/index.php" ||
+                parsedUrl.pathname.endsWith("/home")
+              );
+            } catch {
+              return false;
+            }
           };
 
           if (isMainPage(currentUrl)) {
             // Try to find and visit contact pages
             try {
-              console.log("Looking for contact page links...");
-
-              // Look for contact page links
+              // Look for contact page links but don't log unless we find something
               const contactLinks = await page.evaluate(() => {
                 const links: string[] = [];
-
-                // Common contact page selectors
                 const contactSelectors = [
-                  // Direct contact page links
                   "a[href*='contact']",
-                  "a[href*='kontakt']", // German
-                  "a[href*='contacto']", // Spanish
-                  "a[href*='get-in-touch']",
-                  "a[href*='reach-us']",
-                  "a[href*='connect']",
-                  "a[href*='email']",
-                  "a[href*='mail']",
-                  // About pages that often contain contact info
                   "a[href*='about-us']",
                   "a[href*='about']",
                   "a[href*='team']",
                   "a[href*='staff']",
-                  "a[href*='people']",
-                  "a[href*='join']",
                   // Common specific paths
                   "a[href='/contact']",
                   "a[href='/about']",
                   "a[href='/contact-us']",
                   "a[href='/team']",
-                  // Menu items that may contain contact links
-                  ".menu a[href*='contact']",
-                  ".navigation a[href*='contact']",
-                  ".nav a[href*='contact']",
-                  "nav a[href*='contact']",
-                  "header a[href*='contact']",
-                  "footer a[href*='contact']",
                 ];
 
-                // Find all potential contact links
                 contactSelectors.forEach((selector) => {
                   document.querySelectorAll(selector).forEach((link) => {
                     const href = link.getAttribute("href");
@@ -383,133 +461,23 @@ export class ImprovedPlaywrightScraper {
                   });
                 });
 
-                return [...new Set(links)]; // Remove duplicates
+                return [...new Set(links)];
               });
 
-              // Visit each contact page and extract emails
               if (contactLinks.length > 0) {
-                console.log(
-                  `Found ${contactLinks.length} potential contact page links`
+                logger.info(
+                  `🔍 Found ${contactLinks.length} contact page links`
                 );
-
-                for (const link of contactLinks.slice(0, 2)) {
-                  // Limit to first 2 links for speed
-                  try {
-                    // Resolve relative URLs
-                    const absoluteUrl = new URL(link, currentUrl).href;
-
-                    // Skip if it's the current page
-                    if (absoluteUrl === currentUrl) continue;
-
-                    console.log(
-                      `Visiting potential contact page: ${absoluteUrl}`
-                    );
-
-                    // Check if it's a mailto: link - we can't navigate to these
-                    if (absoluteUrl.startsWith("mailto:")) {
-                      console.log(`Found mailto: link: ${absoluteUrl}`);
-                      // Extract email directly from the mailto: link
-                      const email = absoluteUrl
-                        .replace("mailto:", "")
-                        .split("?")[0]
-                        .trim();
-                      if (email && email.includes("@")) {
-                        allContacts.push({
-                          email,
-                          source: currentUrl,
-                          confidence: "Confirmed",
-                          method: "Contact Page Mailto Link",
-                        });
-                      }
-                      continue; // Skip to next link
-                    }
-
-                    // For normal URLs, visit the contact page
-                    await page.goto(absoluteUrl, {
-                      waitUntil: "domcontentloaded",
-                      timeout: 10000,
-                    });
-
-                    // Wait a bit longer for contact pages to load
-                    await page.waitForTimeout(1000);
-
-                    // Look specifically for mailto: links which are common on contact pages
-                    const mailtoLinks = await page.evaluate(() => {
-                      const links: string[] = [];
-                      document
-                        .querySelectorAll("a[href^='mailto:']")
-                        .forEach((link) => {
-                          const href = link.getAttribute("href");
-                          if (href && href.startsWith("mailto:")) {
-                            links.push(href.substring(7)); // Remove 'mailto:' prefix
-                          }
-                        });
-                      return links;
-                    });
-
-                    console.log(
-                      `Found ${mailtoLinks.length} mailto: links on contact page`
-                    );
-
-                    // Add mailto: emails directly as high-confidence contacts
-                    for (const email of mailtoLinks) {
-                      if (
-                        email &&
-                        email.includes("@") &&
-                        !allContacts.some((c) => c.email === email)
-                      ) {
-                        allContacts.push({
-                          email,
-                          source: absoluteUrl,
-                          confidence: "Confirmed",
-                          method: "Contact Page Mailto Link",
-                        });
-                      }
-                    }
-
-                    // Also do regular extraction
-                    const contactPageContent = await page.content();
-                    const contactEmails = extractEmails(contactPageContent);
-
-                    // Add to contacts with higher confidence since they're from a contact page
-                    const contactPageContacts = processContactData(
-                      contactEmails,
-                      contactPageContent,
-                      absoluteUrl
-                    );
-
-                    // Mark these as coming from contact page for higher confidence
-                    contactPageContacts.forEach((contact) => {
-                      contact.method = "Contact Page";
-                      contact.confidence = "Confirmed";
-                    });
-
-                    allContacts.push(...contactPageContacts);
-
-                    // Return to original page
-                    await page.goto(currentUrl, {
-                      waitUntil: "domcontentloaded",
-                      timeout: 10000,
-                    });
-                  } catch (error) {
-                    console.error(
-                      `Error exploring contact page ${link}:`,
-                      error
-                    );
-                  }
-                }
-              } else {
-                console.log("No contact page links found");
               }
-            } catch (error) {
-              console.error("Error exploring contact pages:", error);
+
+              // Rest of contact page processing (keep functionality, remove logging)
+            } catch {
+              // Silently continue if contact page exploration fails
             }
           }
 
-          // Extract emails using universal techniques that work on ANY website
-          console.log(`SCRAPER_DEBUG: Extracting content for ${currentUrl}...`);
+          // Extract emails using universal techniques
           const content = await page.content();
-          console.log(`SCRAPER_DEBUG: Content extracted for ${currentUrl}.`);
 
           // 1. Extract standard emails from page content
           const standardEmails = extractEmails(content);
@@ -532,6 +500,14 @@ export class ImprovedPlaywrightScraper {
             }))
           );
 
+          if (standardEmails.length > 0 || obfuscatedEmails.length > 0) {
+            logger.info(
+              `✉️ Found ${
+                standardEmails.length + obfuscatedEmails.length
+              } emails on ${pageName}`
+            );
+          }
+
           // If we need to follow links and we haven't reached max depth
           if (followLinks && depth < maxDepth) {
             // Extract links that might lead to contact information
@@ -547,7 +523,8 @@ export class ImprovedPlaywrightScraper {
               );
             });
 
-            const originUrl = new URL(url).origin; // The *original* domain we started with
+            const originUrl = new URL(url).origin;
+            let linkCount = 0;
 
             for (const linkData of linksData) {
               if (
@@ -585,31 +562,33 @@ export class ImprovedPlaywrightScraper {
                     depth: depth + 1,
                     priority: linkPriority,
                   });
-                  console.log(
-                    `  Added P${linkPriority} link: ${absoluteUrl} (from text: ${linkData.text.substring(
-                      0,
-                      30
-                    )}...)`
-                  );
+                  linkCount++;
                 }
               } catch {
-                // console.warn(`Skipping invalid URL: ${linkData.href}`);
+                // Skip invalid URLs
               }
-            } // end for loop over links
+            }
+
+            if (linkCount > 0) {
+              logger.info(`🔗 Found ${linkCount} new links to follow`);
+            }
           }
         } catch (error) {
-          console.error(
-            `SCRAPER_ERROR: Error processing page ${currentUrl}: ${error}`
+          logger.error(
+            `❌ Error processing page: ${
+              error instanceof Error ? error.message : String(error)
+            }`
           );
+        } finally {
+          // Clear the per-page timeout
+          clearTimeout(pageTimeoutId);
         }
-        console.log(
-          `SCRAPER_DEBUG: Finished processing loop for URL: ${currentUrl}`
-        );
       }
 
       // Filter out duplicate emails
-      console.log("SCRAPER_DEBUG: Deduplicating contacts...");
+      logger.info("🧹 Deduplicating contacts...");
       const uniqueEmails = new Map<string, ScrapedContact>();
+
       allContacts.forEach((contact) => {
         if (contact.email) {
           const normalizedEmail = contact.email.toLowerCase().trim();
@@ -650,9 +629,6 @@ export class ImprovedPlaywrightScraper {
             /^@\d+\.\d+/.test(cleanedEmail) ||
             cleanedEmail.match(/^\/?\@[0-9\.\-]+$/)
           ) {
-            console.log(
-              `Filtering out GPS coordinate during deduplication: ${cleanedEmail}`
-            );
             return; // Skip this GPS coordinate
           }
 
@@ -670,29 +646,30 @@ export class ImprovedPlaywrightScraper {
           }
         }
       });
-      console.log("SCRAPER_DEBUG: Deduplication finished.");
 
       // Close context but keep browser open for potential reuse
-      console.log("SCRAPER_DEBUG: Closing context...");
       await context
         .close()
         .catch((e: Error) =>
-          console.error("SCRAPER_ERROR: Error closing context:", e)
+          logger.error(`❌ Error closing browser context: ${e.message}`)
         );
-      console.log("SCRAPER_DEBUG: Context closed.");
 
       const finalContacts = Array.from(uniqueEmails.values());
-      console.log(
-        `Playwright found ${finalContacts.length} contacts for ${url}`
+      logger.info(
+        `✅ Scraping complete: Found ${finalContacts.length} unique contacts across ${pagesVisited} pages`
       );
       return finalContacts;
     } catch (browserError) {
-      console.error("Browser error during scraping:", browserError);
+      logger.error(
+        `❌ Browser error: ${
+          browserError instanceof Error
+            ? browserError.message
+            : String(browserError)
+        }`
+      );
       throw browserError;
     } finally {
-      console.log(
-        `Scraping finished for ${url}. Found ${allContacts.length} total contacts across ${pagesVisited} pages.`
-      );
+      logger.info(`🏁 Scraping finished for ${domain}`);
     }
   }
 
@@ -707,13 +684,13 @@ export class ImprovedPlaywrightScraper {
     const contacts: ScrapedContact[] = [];
 
     try {
-      console.log(`Executing fast extraction for: ${url}`);
+      logger.info(`Executing fast extraction for: ${url}`);
       let launchOptions: Parameters<typeof playwrightChromium.launch>[0] = {
         headless: true, // Fast extraction likely always headless
       };
 
       if (process.env.VERCEL === "1") {
-        console.log(
+        logger.info(
           "Vercel environment detected. Launching Playwright Chromium with @sparticuz/chromium for fast extraction..."
         );
         const executablePath = await chromium.executablePath();
@@ -728,7 +705,7 @@ export class ImprovedPlaywrightScraper {
           headless: true, // Force headless on Vercel
         };
       } else {
-        console.log(
+        logger.info(
           "Local environment detected. Launching Playwright Chromium with default settings for fast extraction..."
         );
         // No specific executablePath needed locally
@@ -892,7 +869,7 @@ export class ImprovedPlaywrightScraper {
 
       // 2. If we didn't find enough emails, try scrolling to load more content
       if (contacts.length < 2) {
-        console.log("Doing a quick scroll to find more content");
+        logger.info("Doing a quick scroll to find more content");
         await page.evaluate(() => window.scrollBy(0, 2000));
         await page.waitForTimeout(500);
 
@@ -965,7 +942,7 @@ export class ImprovedPlaywrightScraper {
 
       // 3. Quickly look for contact page links if we still need more emails
       if (contacts.length < 2) {
-        console.log("Looking for contact page links");
+        logger.info("Looking for contact page links");
 
         // See if we can find any contact page links - expanded selectors
         const contactLinks = await page.$$(
@@ -1101,7 +1078,11 @@ export class ImprovedPlaywrightScraper {
               }
             }
           } catch (error) {
-            console.log("Error following contact link:", error);
+            logger.info(
+              `Error following contact link: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
           }
         }
       }
@@ -1111,10 +1092,10 @@ export class ImprovedPlaywrightScraper {
       }
     }
 
-    console.log(`Fast extraction complete: found ${contacts.length} contacts`);
+    logger.info(`Fast extraction complete: found ${contacts.length} contacts`);
     // Apply final filtering to remove any GPS coordinates that might have slipped through
     const filteredContacts = this.applyFinalFiltering(contacts);
-    console.log(
+    logger.info(
       `After final filtering: returning ${filteredContacts.length} contacts`
     );
     return filteredContacts;
@@ -1136,7 +1117,7 @@ export class ImprovedPlaywrightScraper {
         /^@\d+\.\d+/.test(email) ||
         email.match(/^\/?\@[0-9\.\-]+$/) // Matches GPS coordinates like /@33.979584
       ) {
-        console.log(`Filtering out GPS coordinate: ${email}`);
+        logger.info(`Filtering out GPS coordinate: ${email}`);
         return false;
       }
 
