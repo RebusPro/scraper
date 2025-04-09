@@ -5,6 +5,7 @@ import ResultsDisplay from "@/components/ResultsDisplay"; // Reuse the results d
 import { ScrapingResult, ScrapedContact } from "@/lib/scraper/types"; // Import necessary types
 // Import export utilities
 import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
+import { toast } from "react-hot-toast";
 
 // Define types for the data fetched from the APIs
 interface BatchSummary {
@@ -51,6 +52,9 @@ export default function HistoryPage() {
   // Filter State
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
+
+  // Add state for tracking batch deletion
+  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
 
   // Hover State for URL Tooltip
   const [hoveredBatchId, setHoveredBatchId] = useState<string | null>(null);
@@ -242,6 +246,57 @@ export default function HistoryPage() {
     fetchBatches(1); // Fetch without filters
   };
 
+  // Handle batch deletion
+  const handleDeleteBatch = async (batchId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent selecting the batch when clicking delete
+
+    if (
+      !confirm(
+        "Are you sure you want to delete this batch? This action cannot be undone."
+      )
+    ) {
+      return;
+    }
+
+    setDeletingBatchId(batchId);
+
+    try {
+      const response = await fetch(`/api/history/delete?batchId=${batchId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || `Failed to delete batch: ${response.statusText}`
+        );
+      }
+
+      // On success, remove the batch from the local state
+      setBatchList((prevList) =>
+        prevList.filter((batch) => batch.batchId !== batchId)
+      );
+
+      // If the deleted batch was selected, clear the selection
+      if (selectedBatchId === batchId) {
+        setSelectedBatchId(null);
+        setSelectedBatchResults([]);
+      }
+
+      // Update total count
+      setTotalBatches((prev) => prev - 1);
+
+      toast.success("Batch deleted successfully");
+    } catch (err) {
+      console.error("Error deleting batch:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to delete batch"
+      );
+    } finally {
+      setDeletingBatchId(null);
+    }
+  };
+
   // --- URL Tooltip Handlers ---
   const handleBadgeMouseEnter = async (batchId: string) => {
     // Avoid fetching if already hovering same batch or already loading
@@ -390,60 +445,107 @@ export default function HistoryPage() {
                           <p className="font-semibold text-sm text-gray-800 dark:text-gray-100">
                             {new Date(batch.startTime).toLocaleString()}
                           </p>
-                          <span
-                            onMouseEnter={() =>
-                              handleBadgeMouseEnter(batch.batchId)
-                            }
-                            onMouseLeave={handleBadgeMouseLeave}
-                            className="flex-shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300 whitespace-nowrap cursor-help relative" // Added cursor-help, relative
-                            title={`${batch.processedCount} URLs Processed`}
-                          >
-                            {batch.processedCount} URLs
-                            {/* Tooltip Content - Absolutely Positioned */}
-                            {hoveredBatchId === batch.batchId && (
-                              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-2 text-xs text-white bg-gray-900 dark:bg-gray-700 rounded-md shadow-lg z-10 break-words">
-                                {isLoadingUrls && <p>Loading URLs...</p>}
-                                {urlError && (
-                                  <p className="text-red-400">
-                                    Error: {urlError}
-                                  </p>
-                                )}
-                                {hoveredUrls &&
-                                  !isLoadingUrls &&
-                                  !urlError &&
-                                  (hoveredUrls.length > 0 ? (
-                                    <>
-                                      <p className="font-semibold mb-1 border-b border-gray-600 pb-1">
-                                        Scraped URLs:
-                                      </p>
-                                      <ul className="list-disc list-inside max-h-40 overflow-y-auto">
-                                        {hoveredUrls.slice(0, 15).map(
-                                          (
-                                            url,
-                                            i // Limit display length
-                                          ) => (
-                                            <li
-                                              key={i}
-                                              className="truncate"
-                                              title={url}
-                                            >
-                                              {url}
-                                            </li>
-                                          )
-                                        )}
-                                      </ul>
-                                      {hoveredUrls.length > 15 && (
-                                        <p className="text-center text-gray-400 mt-1">
-                                          ...and {hoveredUrls.length - 15} more
+                          <div className="flex space-x-2 items-center">
+                            <span
+                              onMouseEnter={() =>
+                                handleBadgeMouseEnter(batch.batchId)
+                              }
+                              onMouseLeave={handleBadgeMouseLeave}
+                              className="flex-shrink-0 text-xs font-medium px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300 whitespace-nowrap cursor-help relative" // Added cursor-help, relative
+                              title={`${batch.processedCount} URLs Processed`}
+                            >
+                              {batch.processedCount} URLs
+                              {/* Tooltip Content - Absolutely Positioned */}
+                              {hoveredBatchId === batch.batchId && (
+                                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-64 p-2 text-xs text-white bg-gray-900 dark:bg-gray-700 rounded-md shadow-lg z-10 break-words">
+                                  {isLoadingUrls && <p>Loading URLs...</p>}
+                                  {urlError && (
+                                    <p className="text-red-400">
+                                      Error: {urlError}
+                                    </p>
+                                  )}
+                                  {hoveredUrls &&
+                                    !isLoadingUrls &&
+                                    !urlError &&
+                                    (hoveredUrls.length > 0 ? (
+                                      <>
+                                        <p className="font-semibold mb-1 border-b border-gray-600 pb-1">
+                                          Scraped URLs:
                                         </p>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <p>No URLs found for this batch.</p>
-                                  ))}
-                              </div>
-                            )}
-                          </span>
+                                        <ul className="list-disc list-inside max-h-40 overflow-y-auto">
+                                          {hoveredUrls.slice(0, 15).map(
+                                            (
+                                              url,
+                                              i // Limit display length
+                                            ) => (
+                                              <li
+                                                key={i}
+                                                className="truncate"
+                                                title={url}
+                                              >
+                                                {url}
+                                              </li>
+                                            )
+                                          )}
+                                        </ul>
+                                        {hoveredUrls.length > 15 && (
+                                          <p className="text-center text-gray-400 mt-1">
+                                            ...and {hoveredUrls.length - 15}{" "}
+                                            more
+                                          </p>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <p>No URLs found for this batch.</p>
+                                    ))}
+                                </div>
+                              )}
+                            </span>
+                            <button
+                              className="p-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 focus:outline-none"
+                              onClick={(e) =>
+                                handleDeleteBatch(batch.batchId, e)
+                              }
+                              disabled={deletingBatchId === batch.batchId}
+                              title="Delete batch"
+                            >
+                              {deletingBatchId === batch.batchId ? (
+                                <svg
+                                  className="animate-spin h-4 w-4"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                  ></circle>
+                                  <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  ></path>
+                                </svg>
+                              ) : (
+                                <svg
+                                  className="h-4 w-4"
+                                  fill="currentColor"
+                                  viewBox="0 0 20 20"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+                                    clipRule="evenodd"
+                                  ></path>
+                                </svg>
+                              )}
+                            </button>
+                          </div>
                         </div>
                       </button>
                     </li>
