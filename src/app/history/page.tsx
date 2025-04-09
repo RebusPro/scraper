@@ -56,6 +56,17 @@ export default function HistoryPage() {
   // Add state for tracking batch deletion
   const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
 
+  // Export modal state
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportBatchPage, setExportBatchPage] = useState(1);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportBatches, setExportBatches] = useState<
+    Array<{ batchId: string; startTime: string; selected: boolean }>
+  >([]);
+  const [totalExportPages, setTotalExportPages] = useState(1);
+  const [exportBatchesTotalCount, setExportBatchesTotalCount] = useState(0);
+  const [exportInProgress, setExportInProgress] = useState(false);
+
   // Hover State for URL Tooltip
   const [hoveredBatchId, setHoveredBatchId] = useState<string | null>(null);
   const [hoveredUrls, setHoveredUrls] = useState<string[] | null>(null);
@@ -297,6 +308,171 @@ export default function HistoryPage() {
     }
   };
 
+  const handleExportSelectedBatches = async () => {
+    // Get selected batch IDs
+    const selectedBatchIds = exportBatches
+      .filter((batch) => batch.selected)
+      .map((batch) => batch.batchId);
+
+    if (selectedBatchIds.length === 0) {
+      toast.error("Please select at least one batch to export");
+      return;
+    }
+
+    setExportInProgress(true);
+
+    try {
+      // Fetch all contacts from selected batches
+      const allContacts: ScrapedContact[] = [];
+
+      for (const batchId of selectedBatchIds) {
+        try {
+          // Use the results endpoint instead of batch endpoint
+          const response = await fetch(
+            `/api/history/results?batchId=${batchId}`
+          );
+          if (!response.ok) {
+            throw new Error(`Failed to fetch batch ${batchId}`);
+          }
+
+          const data = await response.json();
+          // Extract contacts from results
+          if (data.results && Array.isArray(data.results)) {
+            data.results.forEach((result: HistoryResultRow) => {
+              if (result.contacts && Array.isArray(result.contacts)) {
+                allContacts.push(...result.contacts);
+              }
+            });
+          }
+        } catch (batchError) {
+          console.error(`Error fetching batch ${batchId}:`, batchError);
+          toast.error(`Could not fetch batch ${batchId.substring(0, 8)}...`);
+          // Continue with other batches even if one fails
+        }
+      }
+
+      if (allContacts.length === 0) {
+        toast.error("No contacts found in the selected batches");
+        setExportInProgress(false);
+        return;
+      }
+
+      // Remove duplicates based on email
+      const uniqueEmails = new Set<string>();
+      const uniqueContacts = allContacts.filter((contact) => {
+        if (!contact.email) return false;
+
+        const email = contact.email.toLowerCase().trim();
+        if (uniqueEmails.has(email)) {
+          return false;
+        }
+
+        uniqueEmails.add(email);
+        return true;
+      });
+
+      // Convert contacts to record format for Excel export
+      const contactRecords = uniqueContacts.map((contact) => ({
+        email: contact.email || "",
+        name: contact.name || "",
+        source: contact.source || "",
+        confidence: contact.confidence || "",
+        method: contact.method || "",
+        // Add any other fields needed
+      }));
+
+      // Export to Excel
+      const now = new Date().toISOString().replace(/[:.]/g, "-");
+
+      try {
+        // The exportToExcel function returns Promise<void>, not a boolean
+        await exportToExcel(contactRecords, `email-export-${now}`);
+
+        // If we reach here, export was successful (no exception was thrown)
+        const dupesRemoved = allContacts.length - uniqueContacts.length;
+        if (dupesRemoved > 0) {
+          toast.success(
+            `Export complete! ${dupesRemoved} duplicate emails were removed.`
+          );
+        } else {
+          toast.success("Export complete!");
+        }
+        // Close the modal on success
+        setShowExportModal(false);
+      } catch (exportError) {
+        console.error("Export error:", exportError);
+        toast.error("Failed to generate Excel file");
+      }
+    } catch (error) {
+      console.error("Export error:", error);
+      toast.error(error instanceof Error ? error.message : "Export failed");
+    } finally {
+      setExportInProgress(false);
+    }
+  };
+
+  const openExportModal = async () => {
+    setShowExportModal(true);
+    setExportBatches([]);
+    setExportBatchPage(1);
+    await fetchExportBatches(1);
+  };
+
+  const fetchExportBatches = async (page: number) => {
+    setExportLoading(true);
+
+    try {
+      // Use the same filters as the main batch list
+      let url = `/api/history/batches?page=${page}&limit=10`;
+
+      if (startDate) {
+        url += `&startDate=${encodeURIComponent(startDate)}`;
+      }
+
+      if (endDate) {
+        url += `&endDate=${encodeURIComponent(endDate)}`;
+      }
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch batches for export");
+      }
+
+      const data = await response.json();
+
+      setExportBatches(
+        data.batches.map((batch: { batchId: string; startTime: string }) => ({
+          batchId: batch.batchId,
+          startTime: batch.startTime,
+          selected: false,
+        }))
+      );
+
+      setTotalExportPages(Math.ceil(data.total / 10));
+      setExportBatchesTotalCount(data.total);
+    } catch (error) {
+      console.error("Error fetching export batches:", error);
+      toast.error("Failed to load batches for export");
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleExportBatchCheckbox = (batchId: string) => {
+    setExportBatches((prev) =>
+      prev.map((batch) =>
+        batch.batchId === batchId
+          ? { ...batch, selected: !batch.selected }
+          : batch
+      )
+    );
+  };
+
+  const handleSelectAllExportBatches = (selected: boolean) => {
+    setExportBatches((prev) => prev.map((batch) => ({ ...batch, selected })));
+  };
+
   // --- URL Tooltip Handlers ---
   const handleBadgeMouseEnter = async (batchId: string) => {
     // Avoid fetching if already hovering same batch or already loading
@@ -340,9 +516,62 @@ export default function HistoryPage() {
       <div className="container mx-auto relative">
         {" "}
         {/* Added relative for tooltip positioning */}
-        <h1 className="text-3xl font-bold text-gray-800 dark:text-white mb-6">
-          Scraping History
-        </h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Scraping History
+          </h1>
+          <div className="flex space-x-3">
+            <button
+              onClick={openExportModal}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={batchList.length === 0}
+            >
+              {isHistoryDownloading ? (
+                <>
+                  <svg
+                    className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="-ml-1 mr-2 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                  Export Selected Batches
+                </>
+              )}
+            </button>
+          </div>
+        </div>
         {error && (
           <div
             className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4"
@@ -612,6 +841,207 @@ export default function HistoryPage() {
           </div>
         </div>
       </div>
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center">
+            <div
+              className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+              onClick={() => !exportInProgress && setShowExportModal(false)}
+            ></div>
+
+            <div className="relative inline-block align-bottom bg-white dark:bg-gray-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+              <div className="px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div className="sm:flex sm:items-start">
+                  <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900 dark:text-white">
+                      Select Batches to Export
+                    </h3>
+                    <div className="mt-4">
+                      <div className="flex justify-between mb-2">
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          Select the batches you want to export. Total:{" "}
+                          {exportBatchesTotalCount} batches
+                        </p>
+
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            id="select-all"
+                            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                            onChange={(e) =>
+                              handleSelectAllExportBatches(e.target.checked)
+                            }
+                            checked={
+                              exportBatches.length > 0 &&
+                              exportBatches.every((b) => b.selected)
+                            }
+                            disabled={exportInProgress}
+                          />
+                          <label
+                            htmlFor="select-all"
+                            className="ml-2 text-sm text-gray-700 dark:text-gray-300"
+                          >
+                            Select All
+                          </label>
+                        </div>
+                      </div>
+
+                      {exportLoading ? (
+                        <div className="flex justify-center py-10">
+                          <svg
+                            className="animate-spin h-8 w-8 text-indigo-600"
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            ></circle>
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            ></path>
+                          </svg>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="space-y-2 max-h-80 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                            {exportBatches.map((batch) => (
+                              <div
+                                key={batch.batchId}
+                                className="flex items-center p-3 rounded-md bg-gray-50 dark:bg-gray-800"
+                              >
+                                <input
+                                  type="checkbox"
+                                  id={`batch-${batch.batchId}`}
+                                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                  checked={batch.selected}
+                                  onChange={() =>
+                                    handleExportBatchCheckbox(batch.batchId)
+                                  }
+                                  disabled={exportInProgress}
+                                />
+                                <label
+                                  htmlFor={`batch-${batch.batchId}`}
+                                  className="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                                >
+                                  {new Date(batch.startTime).toLocaleString()} -
+                                  Batch ID: {batch.batchId.substring(0, 8)}...
+                                </label>
+                              </div>
+                            ))}
+
+                            {exportBatches.length === 0 && (
+                              <p className="text-center py-4 text-gray-500 dark:text-gray-400">
+                                No batches found matching the current filters
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Pagination */}
+                          {totalExportPages > 1 && (
+                            <div className="flex justify-center mt-4 space-x-2">
+                              <button
+                                onClick={() => {
+                                  setExportBatchPage((prev) =>
+                                    Math.max(prev - 1, 1)
+                                  );
+                                  fetchExportBatches(exportBatchPage - 1);
+                                }}
+                                disabled={
+                                  exportBatchPage === 1 || exportInProgress
+                                }
+                                className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                              >
+                                Previous
+                              </button>
+
+                              <span className="px-3 py-1 text-sm text-gray-700 dark:text-gray-300">
+                                Page {exportBatchPage} of {totalExportPages}
+                              </span>
+
+                              <button
+                                onClick={() => {
+                                  setExportBatchPage((prev) =>
+                                    Math.min(prev + 1, totalExportPages)
+                                  );
+                                  fetchExportBatches(exportBatchPage + 1);
+                                }}
+                                disabled={
+                                  exportBatchPage === totalExportPages ||
+                                  exportInProgress
+                                }
+                                className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button
+                  type="button"
+                  onClick={handleExportSelectedBatches}
+                  disabled={
+                    exportInProgress || exportBatches.every((b) => !b.selected)
+                  }
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                >
+                  {exportInProgress ? (
+                    <>
+                      <svg
+                        className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
+                      </svg>
+                      Exporting...
+                    </>
+                  ) : (
+                    "Export Selected"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-gray-700 text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                  onClick={() => setShowExportModal(false)}
+                  disabled={exportInProgress}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
