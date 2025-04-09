@@ -58,7 +58,6 @@ export default function HistoryPage() {
 
   // Export modal state
   const [showExportModal, setShowExportModal] = useState(false);
-  const [exportBatchPage, setExportBatchPage] = useState(1);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportBatches, setExportBatches] = useState<
     Array<{
@@ -69,7 +68,6 @@ export default function HistoryPage() {
       urls?: string[];
     }>
   >([]);
-  const [totalExportPages, setTotalExportPages] = useState(1);
   const [exportBatchesTotalCount, setExportBatchesTotalCount] = useState(0);
   const [exportInProgress, setExportInProgress] = useState(false);
   const [loadingBatchUrls, setLoadingBatchUrls] = useState<string | null>(null);
@@ -429,47 +427,49 @@ export default function HistoryPage() {
   const openExportModal = async () => {
     setShowExportModal(true);
     setExportBatches([]);
-    setExportBatchPage(1);
-    await fetchExportBatches(1);
+    await fetchExportBatches();
   };
 
-  const fetchExportBatches = async (page: number) => {
+  const fetchExportBatches = async () => {
     setExportLoading(true);
 
     try {
-      // Use the same filters as the main batch list
-      let url = `/api/history/batches?page=${page}&limit=10`;
+      // Modify URL to fetch from the new all-batch-ids endpoint
+      const params = new URLSearchParams();
+      if (startDate) params.set("startDate", startDate);
+      if (endDate) params.set("endDate", endDate);
 
-      if (startDate) {
-        url += `&startDate=${encodeURIComponent(startDate)}`;
-      }
-
-      if (endDate) {
-        url += `&endDate=${encodeURIComponent(endDate)}`;
-      }
+      const url = `/api/history/all-batch-ids?${params.toString()}`;
 
       const response = await fetch(url);
 
       if (!response.ok) {
-        throw new Error("Failed to fetch batches for export");
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || "Failed to fetch batches for export"
+        );
       }
 
-      const data = await response.json();
+      const data = await response.json(); // Expects { batches: BatchSummary[], totalCount: number }
 
       setExportBatches(
-        data.batches.map((batch: { batchId: string; startTime: string }) => ({
+        (data.batches || []).map((batch: BatchSummary) => ({
           batchId: batch.batchId,
           startTime: batch.startTime,
+          // processedCount: batch.processedCount, // This info is now included, but not directly used in the modal UI state
           selected: false,
           expanded: false,
         }))
       );
 
-      setTotalExportPages(Math.ceil(data.total / 10));
-      setExportBatchesTotalCount(data.total);
+      setExportBatchesTotalCount(data.totalCount || 0);
     } catch (error) {
       console.error("Error fetching export batches:", error);
-      toast.error("Failed to load batches for export");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to load batches for export"
+      );
     } finally {
       setExportLoading(false);
     }
@@ -708,7 +708,7 @@ export default function HistoryPage() {
             </div>
 
             <h2 className="text-xl font-semibold text-gray-800 dark:text-white mb-4">
-              Batches
+              Batches ({totalBatches})
             </h2>
             {isLoadingBatches ? (
               <div className="text-center py-10">
@@ -1106,46 +1106,6 @@ export default function HistoryPage() {
                               </p>
                             )}
                           </div>
-
-                          {/* Pagination */}
-                          {totalExportPages > 1 && (
-                            <div className="flex justify-center mt-4 space-x-2">
-                              <button
-                                onClick={() => {
-                                  setExportBatchPage((prev) =>
-                                    Math.max(prev - 1, 1)
-                                  );
-                                  fetchExportBatches(exportBatchPage - 1);
-                                }}
-                                disabled={
-                                  exportBatchPage === 1 || exportInProgress
-                                }
-                                className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
-                              >
-                                Previous
-                              </button>
-
-                              <span className="px-3 py-1 text-sm text-gray-700 dark:text-gray-300">
-                                Page {exportBatchPage} of {totalExportPages}
-                              </span>
-
-                              <button
-                                onClick={() => {
-                                  setExportBatchPage((prev) =>
-                                    Math.min(prev + 1, totalExportPages)
-                                  );
-                                  fetchExportBatches(exportBatchPage + 1);
-                                }}
-                                disabled={
-                                  exportBatchPage === totalExportPages ||
-                                  exportInProgress
-                                }
-                                className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
-                              >
-                                Next
-                              </button>
-                            </div>
-                          )}
                         </>
                       )}
                     </div>
