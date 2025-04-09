@@ -61,11 +61,18 @@ export default function HistoryPage() {
   const [exportBatchPage, setExportBatchPage] = useState(1);
   const [exportLoading, setExportLoading] = useState(false);
   const [exportBatches, setExportBatches] = useState<
-    Array<{ batchId: string; startTime: string; selected: boolean }>
+    Array<{
+      batchId: string;
+      startTime: string;
+      selected: boolean;
+      expanded: boolean;
+      urls?: string[];
+    }>
   >([]);
   const [totalExportPages, setTotalExportPages] = useState(1);
   const [exportBatchesTotalCount, setExportBatchesTotalCount] = useState(0);
   const [exportInProgress, setExportInProgress] = useState(false);
+  const [loadingBatchUrls, setLoadingBatchUrls] = useState<string | null>(null);
 
   // Hover State for URL Tooltip
   const [hoveredBatchId, setHoveredBatchId] = useState<string | null>(null);
@@ -446,6 +453,7 @@ export default function HistoryPage() {
           batchId: batch.batchId,
           startTime: batch.startTime,
           selected: false,
+          expanded: false,
         }))
       );
 
@@ -467,6 +475,57 @@ export default function HistoryPage() {
           : batch
       )
     );
+  };
+
+  const handleToggleBatchExpand = async (batchId: string) => {
+    // Find the batch
+    const batch = exportBatches.find((b) => b.batchId === batchId);
+
+    if (!batch) return;
+
+    // If already expanded, just toggle closed
+    if (batch.expanded) {
+      setExportBatches((prev) =>
+        prev.map((b) => (b.batchId === batchId ? { ...b, expanded: false } : b))
+      );
+      return;
+    }
+
+    // If URLs already loaded, just expand
+    if (batch.urls) {
+      setExportBatches((prev) =>
+        prev.map((b) => (b.batchId === batchId ? { ...b, expanded: true } : b))
+      );
+      return;
+    }
+
+    // Need to fetch URLs
+    setLoadingBatchUrls(batchId);
+
+    try {
+      const response = await fetch(
+        `/api/history/batch-urls?batchId=${batchId}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to load URLs for this batch");
+      }
+
+      const data = await response.json();
+
+      setExportBatches((prev) =>
+        prev.map((b) =>
+          b.batchId === batchId
+            ? { ...b, expanded: true, urls: data.urls || [] }
+            : b
+        )
+      );
+    } catch (error) {
+      console.error(`Error loading URLs for batch ${batchId}:`, error);
+      toast.error("Failed to load URLs for this batch");
+    } finally {
+      setLoadingBatchUrls(null);
+    }
   };
 
   const handleSelectAllExportBatches = (selected: boolean) => {
@@ -917,25 +976,119 @@ export default function HistoryPage() {
                             {exportBatches.map((batch) => (
                               <div
                                 key={batch.batchId}
-                                className="flex items-center p-3 rounded-md bg-gray-50 dark:bg-gray-800"
+                                className="rounded-md bg-gray-50 dark:bg-gray-800 overflow-hidden"
                               >
-                                <input
-                                  type="checkbox"
-                                  id={`batch-${batch.batchId}`}
-                                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                                  checked={batch.selected}
-                                  onChange={() =>
-                                    handleExportBatchCheckbox(batch.batchId)
-                                  }
-                                  disabled={exportInProgress}
-                                />
-                                <label
-                                  htmlFor={`batch-${batch.batchId}`}
-                                  className="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                                >
-                                  {new Date(batch.startTime).toLocaleString()} -
-                                  Batch ID: {batch.batchId.substring(0, 8)}...
-                                </label>
+                                <div className="flex items-center justify-between p-3">
+                                  <div className="flex items-center flex-1">
+                                    <input
+                                      type="checkbox"
+                                      id={`batch-${batch.batchId}`}
+                                      className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                      checked={batch.selected}
+                                      onChange={() =>
+                                        handleExportBatchCheckbox(batch.batchId)
+                                      }
+                                      disabled={exportInProgress}
+                                    />
+                                    <label
+                                      htmlFor={`batch-${batch.batchId}`}
+                                      className="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                                    >
+                                      {new Date(
+                                        batch.startTime
+                                      ).toLocaleString()}{" "}
+                                      - Batch ID:{" "}
+                                      {batch.batchId.substring(0, 8)}...
+                                    </label>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleToggleBatchExpand(batch.batchId)
+                                    }
+                                    className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 focus:outline-none"
+                                    aria-expanded={batch.expanded}
+                                    disabled={
+                                      loadingBatchUrls === batch.batchId
+                                    }
+                                  >
+                                    {loadingBatchUrls === batch.batchId ? (
+                                      <svg
+                                        className="animate-spin h-5 w-5"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <circle
+                                          className="opacity-25"
+                                          cx="12"
+                                          cy="12"
+                                          r="10"
+                                          stroke="currentColor"
+                                          strokeWidth="4"
+                                        ></circle>
+                                        <path
+                                          className="opacity-75"
+                                          fill="currentColor"
+                                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                        ></path>
+                                      </svg>
+                                    ) : batch.expanded ? (
+                                      <svg
+                                        className="h-5 w-5"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M5 15l7-7 7 7"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <svg
+                                        className="h-5 w-5"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M19 9l-7 7-7-7"
+                                        />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+
+                                {/* Collapsible URL list */}
+                                {batch.expanded && (
+                                  <div className="px-3 pb-3 pt-0 text-sm border-t border-gray-200 dark:border-gray-700">
+                                    <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
+                                      Scraped URLs:
+                                    </p>
+                                    {batch.urls && batch.urls.length > 0 ? (
+                                      <ul className="text-xs text-gray-600 dark:text-gray-400 space-y-1 pl-2 max-h-32 overflow-y-auto">
+                                        {batch.urls.map((url, idx) => (
+                                          <li key={idx} className="break-all">
+                                            • {url}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="text-xs text-gray-500 italic">
+                                        No URLs found for this batch
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             ))}
 
