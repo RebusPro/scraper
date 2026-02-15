@@ -8,12 +8,12 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { ScrapedContact } from "@/lib/scraper/types";
-import { US_STATES, CITIES_BY_STATE } from "@/lib/constants/citiesByState";
+import { US_STATES } from "@/lib/constants/citiesByState";
 
 interface WhereToShootFormProps {
   onResults: (
     contacts: ScrapedContact[],
-    rawRanges: Record<string, unknown>[]
+    rawRanges: Record<string, unknown>[],
   ) => void;
 }
 
@@ -21,15 +21,34 @@ export default function WhereToShootForm({ onResults }: WhereToShootFormProps) {
   const [selectedState, setSelectedState] = useState("");
   const [selectedCity, setSelectedCity] = useState("ALL Cities");
   const [availableCities, setAvailableCities] = useState<string[]>([]);
+  const [isLoadingCities, setIsLoadingCities] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Update available cities when state changes
+  // Fetch available cities dynamically when state changes
   useEffect(() => {
     if (selectedState) {
-      const cities = CITIES_BY_STATE[selectedState] || [];
-      setAvailableCities(cities);
+      setIsLoadingCities(true);
       setSelectedCity("ALL Cities"); // Reset to ALL when state changes
+
+      // Fetch cities for this state from the API
+      axios
+        .get(
+          `/api/wheretoshoot-cities?state=${encodeURIComponent(selectedState)}`,
+        )
+        .then((response) => {
+          setAvailableCities(response.data.cities || []);
+          console.log(
+            `Loaded ${response.data.count} cities for ${selectedState}`,
+          );
+        })
+        .catch((error) => {
+          console.error("Error fetching cities:", error);
+          setAvailableCities([]); // Fall back to empty if error
+        })
+        .finally(() => {
+          setIsLoadingCities(false);
+        });
     } else {
       setAvailableCities([]);
       setSelectedCity("ALL Cities");
@@ -62,13 +81,10 @@ export default function WhereToShootForm({ onResults }: WhereToShootFormProps) {
 
       if (response.data.contacts && response.data.contacts.length > 0) {
         // Pass contacts and raw range data to parent
-        onResults(
-          response.data.contacts,
-          response.data.ranges || []
-        );
+        onResults(response.data.contacts, response.data.ranges || []);
       } else {
         setError(
-          "No shooting ranges found. Try selecting a different state or city."
+          "No shooting ranges found. Try selecting a different state or city.",
         );
         onResults([], []);
       }
@@ -77,7 +93,7 @@ export default function WhereToShootForm({ onResults }: WhereToShootFormProps) {
       if (axios.isAxiosError(error) && error.response) {
         setError(
           error.response.data.error ||
-            "Failed to fetch data. Please try again."
+            "Failed to fetch data. Please try again.",
         );
       } else {
         setError("Failed to fetch data. Please try again.");
@@ -143,23 +159,32 @@ export default function WhereToShootForm({ onResults }: WhereToShootFormProps) {
                 console.log("City selected:", e.target.value);
                 setSelectedCity(e.target.value);
               }}
+              disabled={isLoadingCities}
             >
-              <option value="ALL Cities">
-                ALL Cities (Recommended - Get all ranges)
-              </option>
-              {availableCities.length > 0 && (
-                <option disabled>──────────────</option>
+              {isLoadingCities ? (
+                <option value="ALL Cities">Loading cities...</option>
+              ) : (
+                <>
+                  <option value="ALL Cities">
+                    ALL Cities (Get all ranges)
+                  </option>
+                  {availableCities.length > 0 && (
+                    <option disabled>──────────────</option>
+                  )}
+                  {availableCities.map((city) => (
+                    <option key={city} value={city}>
+                      {city}
+                    </option>
+                  ))}
+                </>
               )}
-              {availableCities.map((city) => (
-                <option key={city} value={city}>
-                  {city}
-                </option>
-              ))}
             </select>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              {selectedCity === "ALL Cities"
-                ? `Selecting "ALL Cities" will search for ranges across all major cities in ${selectedState}, providing the most comprehensive results.`
-                : `Searching only for ranges in ${selectedCity}, ${selectedState}.`}
+              {isLoadingCities
+                ? "Loading available cities..."
+                : selectedCity === "ALL Cities"
+                  ? `Found ${availableCities.length} cities with ranges in ${selectedState}. Selecting "ALL Cities" will get all of them.`
+                  : `Searching only for ranges in ${selectedCity}, ${selectedState}.`}
             </p>
           </div>
         )}

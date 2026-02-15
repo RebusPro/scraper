@@ -5,57 +5,42 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { ScrapedContact } from "@/lib/scraper/types";
-import { CITIES_BY_STATE } from "@/lib/constants/citiesByState";
 
 // Set runtime to allow longer execution
 export const maxDuration = 60; // 60 seconds max
 
-interface WhereToShootSearchResult {
-  attributes: {
-    type: string;
-    url: string;
-  };
+// Interface for the data.php API response
+interface RangeData {
   Name: string;
-  Shooting_Facility_Range_Name__c: string;
-}
-
-interface WhereToShootRangeDetails {
-  Name: string;
-  Shooting_Facility_Range_Name__c?: string;
-  // Actual field names from API
-  General_Email__c?: string;
-  Primary_Contact_Email__c?: string;
-  Email__c?: string;
-  Main_Phone__c?: string;
-  Primary_Contact_Phone__c?: string;
-  Fax__c?: string;
-  Primary_Phone__c?: string;
-  Fax_Number__c?: string;
-  Web_Site_Address__c?: string;
-  Website__c?: string;
-  First_Name__c?: string;
-  Last_Name__c?: string;
-  Contact_First_Name__c?: string;
-  Contact_Last_Name__c?: string;
-  Primary_Contact_Title__c?: string;
-  Applicants_Title__c?: string;
-  Address__c?: string;
-  Facility_Address_Line_1__c?: string;
-  Facility_Address_Line_2__c?: string;
-  City__c?: string;
-  Facility_City__c?: string;
-  State__c?: string;
-  Facility_State_Province__c?: string;
-  ZIP__c?: string;
-  Facility_Postal_Code__c?: string;
-  Latitude__c?: number;
-  Longitude__c?: number;
-  Facility_Latitude__c?: number;
-  Facility_Longitude__c?: number;
-  Public_or_Private_Facility__c?: string;
-  Type_of_Facility__c?: string;
+  Shooting_Facility_Range_Name: string;
+  General_Email: string;
+  Main_Phone: string;
+  Web_Site_Address: string;
+  Address: string;
+  City: string;
+  State: string;
+  ZIP: string;
+  Country: string;
+  Lat: string;
+  Lng: string;
+  Type_of_Facility: string;
+  Public_or_Private_Facility: string;
   [key: string]: unknown; // For all other fields
 }
+
+// Map state names to abbreviations
+const STATE_ABBREV: Record<string, string> = {
+  Alabama: "AL", Alaska: "AK", Arizona: "AZ", Arkansas: "AR", California: "CA",
+  Colorado: "CO", Connecticut: "CT", Delaware: "DE", Florida: "FL", Georgia: "GA",
+  Hawaii: "HI", Idaho: "ID", Illinois: "IL", Indiana: "IN", Iowa: "IA",
+  Kansas: "KS", Kentucky: "KY", Louisiana: "LA", Maine: "ME", Maryland: "MD",
+  Massachusetts: "MA", Michigan: "MI", Minnesota: "MN", Mississippi: "MS", Missouri: "MO",
+  Montana: "MT", Nebraska: "NE", Nevada: "NV", "New Hampshire": "NH", "New Jersey": "NJ",
+  "New Mexico": "NM", "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", Ohio: "OH",
+  Oklahoma: "OK", Oregon: "OR", Pennsylvania: "PA", "Rhode Island": "RI", "South Carolina": "SC",
+  "South Dakota": "SD", Tennessee: "TN", Texas: "TX", Utah: "UT", Vermont: "VT",
+  Virginia: "VA", Washington: "WA", "West Virginia": "WV", Wisconsin: "WI", Wyoming: "WY",
+};
 
 export async function POST(req: NextRequest) {
   try {
@@ -72,76 +57,63 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Build search terms array
-    let searchTerms: string[] = [];
-
-    if (city === "ALL Cities" || !city) {
-      // Search state name + all major cities
-      searchTerms = [state, ...(CITIES_BY_STATE[state] || [])];
-      console.log(
-        `Searching ALL cities in ${state}. Total search terms: ${searchTerms.length}`
+    // Get state abbreviation
+    const stateAbbrev = STATE_ABBREV[state];
+    if (!stateAbbrev) {
+      return NextResponse.json(
+        { error: `Invalid state: ${state}` },
+        { status: 400 }
       );
-    } else {
-      // Search only specific city
-      searchTerms = [city];
-      console.log(`Searching only ${city}, ${state}`);
     }
 
-    // Step 1: Search for range IDs using all search terms
-    // Add delay between requests to avoid rate limiting
-    console.log("Step 1: Searching for range IDs...");
-    const rangeIdSets: string[][] = [];
+    console.log(`Fetching ALL ranges from data.php and filtering by state: ${stateAbbrev}`);
 
-    // Process searches in batches of 10 with delays to avoid rate limiting
-    const batchSize = 10;
-    for (let i = 0; i < searchTerms.length; i += batchSize) {
-      const batch = searchTerms.slice(i, i + batchSize);
+    // Step 1: Fetch ALL ranges from the data.php endpoint
+    const dataUrl = "https://www.wheretoshoot.org/wp-content/plugins/where-to-shoot/api/data.php?wts_map_data=6857649";
+    console.log("Fetching all ranges from:", dataUrl);
 
-      const batchResults = await Promise.all(
-        batch.map(async (term) => {
-          try {
-            const searchUrl = `https://www.wheretoshoot.org/wp-json/search-form/v1/form/${encodeURIComponent(
-              term
-            )}`;
-            console.log(`Searching: ${searchUrl}`);
-
-            // Add small delay between requests
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            const response = await fetch(searchUrl);
-            if (!response.ok) {
-              console.error(`Search failed for ${term}: ${response.status}`);
-              return [];
-            }
-
-            const results: WhereToShootSearchResult[] = await response.json();
-            console.log(`Found ${results.length} results for "${term}"`);
-
-            // Extract range IDs
-            return results.map((r) => r.Name);
-          } catch (error) {
-            console.error(`Error searching for ${term}:`, error);
-            return [];
-          }
-        })
-      );
-
-      rangeIdSets.push(...batchResults);
-
-      // Delay between batches
-      if (i + batchSize < searchTerms.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+    const response = await fetch(dataUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch range data: ${response.status}`);
     }
 
-    // Flatten and deduplicate range IDs
-    const allRangeIds = rangeIdSets.flat();
-    const uniqueRangeIds = [...new Set(allRangeIds)];
-    console.log(
-      `Total unique range IDs found: ${uniqueRangeIds.length} (from ${allRangeIds.length} total results)`
-    );
+    const allRanges = await response.json();
+    console.log(`Fetched ${allRanges.length} total ranges from data.php`);
 
-    if (uniqueRangeIds.length === 0) {
+    // Step 2: Filter by state (and optionally city)
+    let filteredRanges = allRanges.filter((range: RangeData) => {
+      return range.State === stateAbbrev;
+    });
+
+    console.log(`Found ${filteredRanges.length} ranges in ${state} (${stateAbbrev})`);
+
+    // Log unique cities in this state for debugging
+    const uniqueCities = [...new Set(filteredRanges.map((range: RangeData) => range.City))].sort();
+    console.log(`Unique cities in ${state}:`, uniqueCities.slice(0, 20)); // Show first 20 cities
+
+    // Count ranges per city for debugging
+    const cityCounts: Record<string, number> = {};
+    filteredRanges.forEach((range: RangeData) => {
+      const city = range.City || "Unknown";
+      cityCounts[city] = (cityCounts[city] || 0) + 1;
+    });
+    const citiesWithMultipleRanges = Object.entries(cityCounts)
+      .filter(([, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+    console.log(`Cities with multiple ranges in ${state}:`, citiesWithMultipleRanges);
+
+    // If a specific city is selected, filter further
+    if (city && city !== "ALL Cities") {
+      const beforeFilterCount = filteredRanges.length;
+      filteredRanges = filteredRanges.filter((range: RangeData) => {
+        const rangeCity = String(range.City || "").toLowerCase();
+        return rangeCity.includes(city.toLowerCase());
+      });
+      console.log(`Filtered from ${beforeFilterCount} to ${filteredRanges.length} ranges when searching for "${city}"`);
+    }
+
+    if (filteredRanges.length === 0) {
       return NextResponse.json({
         contacts: [],
         ranges: [],
@@ -149,181 +121,71 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Step 2: Fetch detailed information for each range
-    console.log(
-      "Step 2: Fetching detailed information for each range..."
-    );
-    const rangeDetailsResults: WhereToShootRangeDetails[] = [];
-
-    // Fetch in batches with delays to avoid rate limiting
-    const detailBatchSize = 5;
-    for (let i = 0; i < uniqueRangeIds.length; i += detailBatchSize) {
-      const batch = uniqueRangeIds.slice(i, i + detailBatchSize);
-
-      const batchResults = await Promise.allSettled(
-        batch.map(async (rangeId, index) => {
-          try {
-            // Stagger requests within batch
-            await new Promise(resolve => setTimeout(resolve, index * 200));
-
-            const detailsUrl = `https://www.wheretoshoot.org/wp-json/range-form/v1/form/${rangeId}`;
-            const response = await fetch(detailsUrl);
-
-            if (!response.ok) {
-              console.error(
-                `Failed to fetch details for range ${rangeId}: ${response.status}`
-              );
-              return null;
-            }
-
-            const rawDetails = await response.json();
-            // API returns an array with single object, extract it
-            const details: WhereToShootRangeDetails = Array.isArray(rawDetails) ? rawDetails[0] : rawDetails;
-            console.log(`Fetched details for range ${rangeId}:`, {
-              name: details.Shooting_Facility_Range_Name__c,
-              hasEmail: !!(details.General_Email__c || details.Email__c),
-              hasWebsite: !!(details.Web_Site_Address__c || details.Website__c)
-            });
-            return details;
-          } catch (error) {
-            console.error(`Error fetching details for range ${rangeId}:`, error);
-            return null;
-          }
-        })
-      );
-
-      // Filter successful results
-      batchResults.forEach(result => {
-        if (result.status === "fulfilled" && result.value !== null) {
-          rangeDetailsResults.push(result.value);
-        }
-      });
-
-      // Delay between batches
-      if (i + detailBatchSize < uniqueRangeIds.length) {
-        console.log(`Waiting before next batch... (${rangeDetailsResults.length} fetched so far)`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-
-    // rangeDetailsResults already contains only valid results
-    const rangeDetails: WhereToShootRangeDetails[] = rangeDetailsResults;
-
-    console.log(
-      `Successfully fetched details for ${rangeDetails.length} ranges`
-    );
-
     // Step 3: Extract contact information
     const contacts: ScrapedContact[] = [];
     const processedRanges: Record<string, unknown>[] = [];
 
-    rangeDetails.forEach((range, index) => {
-      // Log first range to see what fields we actually get
+    filteredRanges.forEach((range: RangeData, index: number) => {
+      // Log first range to see what fields we have
       if (index === 0) {
-        console.log("Sample range data (first result):", JSON.stringify(range, null, 2));
+        console.log("Sample range data (first result):", JSON.stringify(range, null, 2).substring(0, 1000));
       }
 
-      // Extract basic contact info - use actual field names from API
-      const email = String(
-        range.General_Email__c ||           // Correct field name!
-        range.Primary_Contact_Email__c ||
-        range.Email__c ||
-        range.email ||
-        range.Email ||
-        ""
-      ).trim().toLowerCase();
-
-      const website = normalizeWebsite(
-        String(
-          range.Web_Site_Address__c ||      // Correct field name!
-          range.Website__c ||
-          range.website ||
-          range.Website ||
-          ""
-        )
-      );
-
-      const phone = String(
-        range.Main_Phone__c ||               // Correct field name!
-        range.Primary_Contact_Phone__c ||
-        range.Fax__c ||
-        range.Primary_Phone__c ||
-        range.Fax_Number__c ||
-        range.phone ||
-        range.Phone ||
-        ""
-      );
-
-      const rangeName = String(
-        range.Shooting_Facility_Range_Name__c ||
-        range.name ||
-        range.Name ||
-        range["facilityName"] ||
-        "Unknown Range"
-      );
-
-      // Build full address - use actual field names from API
-      const addressParts = [
-        range.Address__c,                    // Correct field name!
-        range.Facility_Address_Line_1__c,
-        range.Facility_Address_Line_2__c,
-      ].filter(Boolean);
-      const address = addressParts.join(", ");
-
-      const city = String(range.City__c || range.Facility_City__c || range.city || "");
-      const state = String(range.State__c || range.Facility_State_Province__c || range.state || "");
-      const zip = String(range.ZIP__c || range.Facility_Postal_Code__c || range.zip || "");
-
-      // Build contact name - use actual field names from API
-      const firstName = String(range.First_Name__c || range.Contact_First_Name__c || "");
-      const lastName = String(range.Last_Name__c || range.Contact_Last_Name__c || "");
-      const contactPerson = [firstName, lastName].filter(Boolean).join(" ");
+      // Extract contact info using the data.php field names
+      const email = String(range.General_Email || "").trim().toLowerCase();
+      const website = normalizeWebsite(String(range.Web_Site_Address || ""));
+      const phone = String(range.Main_Phone || "");
+      const rangeName = String(range.Shooting_Facility_Range_Name || "Unknown Range");
+      const address = String(range.Address || "");
+      const rangeCity = String(range.City || "");
+      const rangeState = String(range.State || "");
+      const zip = String(range.ZIP || "");
+      const lat = range.Lat;
+      const lng = range.Lng;
 
       // Build display name with location
       let displayName = rangeName;
-      if (city && state) {
-        displayName = `${rangeName} (${city}, ${state})`;
-      } else if (city) {
-        displayName = `${rangeName} (${city})`;
+      if (rangeCity && rangeState) {
+        displayName = `${rangeName} (${rangeCity}, ${rangeState})`;
+      } else if (rangeCity) {
+        displayName = `${rangeName} (${rangeCity})`;
       }
 
-      // Log what we extracted
+      // Log what we extracted for first few ranges
       if (index < 3) {
         console.log(`Range ${index + 1} extraction:`, {
           rangeName,
           email: email || "NO EMAIL",
           website: website || "NO WEBSITE",
           phone: phone || "NO PHONE",
+          city: rangeCity,
+          state: rangeState,
           hasData: !!(email || website)
         });
       }
 
-      // Only add if we have at least email OR website
-      if (email || website) {
-        contacts.push({
-          email: email || "",
-          url: website || "",
-          name: displayName,
-          phone: phone,
-          title: String(range.Primary_Contact_Title__c || ""),
-          source: "WhereToShoot.org API",
-          // Store additional data for export
-          metadata: {
-            address,
-            city,
-            state,
-            zip,
-            contactPerson,
-            facilityType:
-              range.Public_or_Private_Facility__c || range.Type_of_Facility__c,
-            latitude: range.Latitude__c || range.Facility_Latitude__c,
-            longitude: range.Longitude__c || range.Facility_Longitude__c,
-          },
-        });
-      }
+      // Add all ranges (even without email/website, they may have phone or address)
+      contacts.push({
+        email: email || "",
+        url: website || "",
+        name: displayName,
+        phone: phone,
+        title: "",
+        source: "WhereToShoot.org API",
+        metadata: {
+          address,
+          city: rangeCity,
+          state: rangeState,
+          zip,
+          contactPerson: "",
+          facilityType: range.Type_of_Facility || range.Public_or_Private_Facility,
+          latitude: lat,
+          longitude: lng,
+        },
+      });
 
       // Store full range data for raw view
-      processedRanges.push(range as Record<string, unknown>);
+      processedRanges.push(range);
     });
 
     console.log(`Extracted ${contacts.length} contacts with email or website`);
@@ -332,9 +194,8 @@ export async function POST(req: NextRequest) {
       contacts,
       ranges: processedRanges,
       stats: {
-        searchTermsUsed: searchTerms.length,
-        rangeIdsFound: uniqueRangeIds.length,
-        rangesWithDetails: rangeDetails.length,
+        totalRangesFetched: allRanges.length,
+        rangesInState: filteredRanges.length,
         contactsExtracted: contacts.length,
       },
     });
