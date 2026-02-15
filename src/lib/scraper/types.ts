@@ -13,6 +13,7 @@ export interface ScrapedContact {
   alternateEmails?: string[]; // Added for storing alternative email formats
   confidence?: "Confirmed" | "Generated" | "Generated - Verification Required"; // Confidence level in the email address
   method?: string; // Method used to find this email (e.g., "Contact Page", "Main Page", "Contact Page Mailto Link")
+  metadata?: Record<string, unknown>; // Additional metadata like address, city, state, etc.
 }
 
 // Type for captured API responses during dynamic scraping
