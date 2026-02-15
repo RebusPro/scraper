@@ -44,4 +44,5 @@ next-env.d.ts
 DOCUMENTATION.md
 config.md
 DEPLOYMENT-HISTORY.md
+schema.sql
 
