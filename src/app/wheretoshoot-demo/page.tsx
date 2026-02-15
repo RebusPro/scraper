@@ -6,6 +6,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ScrapedContact } from "@/lib/scraper/types";
 import WhereToShootForm from "@/components/WhereToShootForm";
 import { exportToCSV, exportToExcel } from "@/lib/scraper/exportUtils";
@@ -214,12 +215,12 @@ export default function WhereToShootDemoPage() {
                       <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded text-sm">
                         <strong>Next step:</strong> Download the Excel or CSV
                         file, then upload it to the{" "}
-                        <a
+                        <Link
                           href="/"
                           className="underline font-semibold hover:text-blue-800 dark:hover:text-blue-200"
                         >
                           main scraper
-                        </a>{" "}
+                        </Link>{" "}
                         to crawl these websites and extract more contact emails!
                       </div>
                       <div className="space-y-4">
